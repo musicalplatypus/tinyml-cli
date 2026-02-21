@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mmcli"
+version = "0.1.0"
+description = "Command-line interface for tinyml-modelmaker training and compilation"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+mmcli = "mmcli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mmcli*"]

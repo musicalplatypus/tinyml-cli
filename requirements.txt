@@ -1,0 +1,6 @@
+# Install tinyml_modelmaker from the sibling repo (editable)
+# Adjust path if your tinyml-tensorlab checkout is elsewhere
+-e ../tinyml-tensorlab/tinyml-modelmaker
+
+PyYAML>=6.0
+pyinstaller>=6.0
