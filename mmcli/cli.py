@@ -236,25 +236,21 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
             "Default: '{date-time}/{model_name}'"
         ),
     )
-    parser.add_argument(
-        "--output",
-        metavar="DIR",
-        default=None,
-        help=(
-            "Root directory for all project outputs (common.projects_path).\n"
-            "Default: ./data/projects"
-        ),
-    )
+    # Note: --output removed; projects_path is now derived from the -i/--project path.
+    # The project directory IS the project_path, and its parent is projects_path.
 
 
 def _add_training_args(parser: argparse.ArgumentParser) -> None:
     detected = _detect_training_device()
     group = parser.add_argument_group("training options")
     group.add_argument(
-        "-i", "--data",
-        default=None,
-        metavar="DATA_PATH",
-        help="Path to input training data directory. Required unless provided via --config.",
+        "-i", "--project",
+        default=os.path.join("data", "projects", "default"),
+        metavar="PROJECT_DIR",
+        help=(
+            "Path to project directory (must contain dataset/ and project.json).\n"
+            "Default: ./data/projects/default"
+        ),
     )
     group.add_argument(
         "--feature-extraction",
@@ -369,7 +365,10 @@ def _add_train_parser(subparsers) -> None:
             "On macOS, Apple Metal (MPS) is used automatically when available.\n\n"
             "Example:\n"
             "  mmcli train -m timeseries -t generic_timeseries_classification \\\n"
-            "              -d F28P55 -n TimeSeries_Generic_1k_t -i ./data/my_dataset\n\n"
+            "              -d F28P55 -n TimeSeries_Generic_1k_t -i ./my_project\n\n"
+            "  # Use default project (./data/projects/default):\n"
+            "  mmcli train -m timeseries -t generic_timeseries_classification \\\n"
+            "              -d F28P55 -n TimeSeries_Generic_1k_t\n\n"
             "  # Force CPU:\n"
             "  mmcli train ... --training-device cpu\n\n"
             "  # Explicit Metal:\n"
@@ -413,7 +412,7 @@ def _add_run_parser(subparsers) -> None:
             "Note: compilation requires ti_mcu_nnc (Linux/Windows only).\n\n"
             "Example:\n"
             "  mmcli run -m timeseries -t generic_timeseries_classification \\\n"
-            "            -d F28P55 -n TimeSeries_Generic_1k_t -i ./data/my_dataset"
+            "            -d F28P55 -n TimeSeries_Generic_1k_t -i ./my_project"
         ),
     )
     _add_common_args(p)
@@ -478,14 +477,36 @@ def _validate_args(args: argparse.Namespace) -> None:
                            ("--device/-d", "device"), ("--model/-n", "model")]:
             if not getattr(args, attr, None):
                 errors.append(f"{flag} is required when --config is not provided")
-        if command in ("train", "run") and not getattr(args, "data", None):
-            errors.append("--data/-i is required when --config is not provided")
         if command == "compile" and not getattr(args, "onnx", None):
             errors.append("--onnx/-o is required when --config is not provided")
 
-    # Path existence checks (when paths are provided, regardless of source)
-    if getattr(args, "data", None) and not os.path.exists(args.data):
-        errors.append(f"--data path not found: {args.data}")
+    # Validate project directory structure for train/run
+    project = getattr(args, "project", None)
+    if project and command in ("train", "run"):
+        project = os.path.abspath(project)
+        args.project = project  # normalize to absolute
+        dataset_dir = os.path.join(project, "dataset")
+        project_json = os.path.join(project, "project.json")
+        annotations_dir = os.path.join(dataset_dir, "annotations")
+        classes_dir = os.path.join(dataset_dir, "classes")
+        if not os.path.isdir(project):
+            errors.append(f"Project directory not found: {project}")
+        elif not os.path.isdir(dataset_dir):
+            errors.append(
+                f"Project directory missing 'dataset/' subdirectory: {project}")
+        elif not os.path.isfile(project_json):
+            errors.append(
+                f"Project directory missing 'project.json': {project}")
+        else:
+            # Validate dataset contents
+            if not os.path.isdir(annotations_dir):
+                errors.append(
+                    f"Dataset missing 'annotations/' subdirectory: {dataset_dir}")
+            if not os.path.isdir(classes_dir):
+                errors.append(
+                    f"Dataset missing 'classes/' subdirectory: {dataset_dir}")
+
+    # Path existence checks
     if getattr(args, "onnx", None) and not os.path.isfile(args.onnx):
         errors.append(f"--onnx file not found: {args.onnx}")
 
