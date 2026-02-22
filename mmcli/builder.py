@@ -108,8 +108,9 @@ def build_config(args) -> dict:
 
     # --- project directory → dataset paths ---
     # -i/--project points to a project dir containing dataset/ and project.json.
-    # We derive input_data_path, dataset_name, and projects_path from it so that
-    # modelmaker's resolve_paths() places run outputs under the project directory.
+    # We set input_data_path to the original data and train_output_path to a
+    # separate "run" directory so that modelmaker creates a working copy
+    # (symlinks) in project_dir/run/dataset rather than clobbering the original.
     project_dir = getattr(args, "project", None)
     if project_dir:
         project_dir = os.path.abspath(project_dir)
@@ -117,8 +118,8 @@ def build_config(args) -> dict:
              os.path.join(project_dir, "dataset"))
         _set(config, "dataset", "dataset_name",
              os.path.basename(project_dir))
-        _set(config, "common", "projects_path",
-             os.path.dirname(project_dir))
+        _set(config, "training", "train_output_path",
+             os.path.join(project_dir, "run"))
 
     # --- feature extraction ---
     _set(
