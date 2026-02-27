@@ -349,6 +349,34 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
 
+    # Performance optimization flags (advanced)
+    perf = parser.add_argument_group("performance options (advanced)")
+    perf.add_argument(
+        "--compile-model",
+        dest="compile_model",
+        type=int,
+        default=None,
+        choices=[0, 1],
+        metavar="0|1",
+        help=(
+            "Enable torch.compile for optimized training.\n"
+            "  0  Disabled (default)\n"
+            "  1  Enable (CUDA: inductor backend, MPS: aot_eager)\n"
+            "Best results on CUDA with inductor. May add overhead on MPS."
+        ),
+    )
+    perf.add_argument(
+        "--native-amp",
+        dest="native_amp",
+        action="store_true",
+        default=None,
+        help=(
+            "Enable PyTorch native mixed precision (torch.amp.autocast).\n"
+            "Reduces memory and may improve throughput on CUDA.\n"
+            "Not recommended on MPS (adds overhead without benefit)."
+        ),
+    )
+
 
 def _add_compilation_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("compilation options")

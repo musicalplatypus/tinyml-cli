@@ -140,6 +140,10 @@ def build_config(args) -> dict:
     _set(config, "training", "num_gpus", getattr(args, "gpus", None))
     _set(config, "training", "quantization", getattr(args, "quantization", None))
 
+    # Performance optimization flags
+    _set(config, "training", "compile_model", getattr(args, "compile_model", None))
+    _set(config, "training", "native_amp", getattr(args, "native_amp", None))
+
     # --training-device: map 'auto' → omit (let tinyml_modelmaker decide),
     # 'mps'/'cuda'/'cpu' → set training_device explicitly.
     # tinyml_modelmaker selects MPS when num_gpus > 0 and MPS is available,

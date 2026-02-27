@@ -90,6 +90,8 @@ mmcli train -m MODULE -t TASK -d DEVICE -n MODEL -i DATA_PATH [options]
 | `--quantization` | | `NO_QUANTIZATION` or `QUANTIZATION_TINPU` |
 | `--run-name` | | Output folder name (supports `{date-time}`, `{model_name}`) |
 | `--output` | | Root output directory |
+| `--compile-model` | | `0` (default) or `1` to enable torch.compile (CUDA recommended) |
+| `--native-amp` | | Enable native mixed precision (CUDA recommended, not for MPS) |
 
 **Example:**
 ```bash
