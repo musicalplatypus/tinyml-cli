@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build_macos.sh — Build a standalone macOS binary for mmcli using PyInstaller
+# build_linux.sh — Build a standalone Linux binary for mmcli using PyInstaller
 #
 # The binary is lightweight (~10 MB) because tinyml_modelmaker is NOT bundled.
 # At runtime the binary calls out to an external Python interpreter via the
@@ -11,16 +11,13 @@
 # Output: dist/mmcli  (single-file native binary)
 #
 # Usage:
-#   bash build_macos.sh              # arm64 (Apple Silicon, default)
-#   ARCH=x86_64 bash build_macos.sh  # Intel
-#   ARCH=universal2 bash build_macos.sh  # fat binary (both)
+#   bash build_linux.sh
 
 set -euo pipefail
 
-ARCH="${ARCH:-arm64}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Building mmcli for macOS ${ARCH}..."
+echo "Building mmcli for Linux..."
 
 # Ensure PyInstaller is available
 if ! python -c "import PyInstaller" 2>/dev/null; then
@@ -29,12 +26,11 @@ if ! python -c "import PyInstaller" 2>/dev/null; then
 fi
 
 # Clean previous build artifacts
-rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}/dist/mmcli" "${SCRIPT_DIR}/mmcli.spec"
+rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}/dist/mmcli"
 
 pyinstaller \
     --onefile \
     --name mmcli \
-    --target-arch "${ARCH}" \
     --hidden-import mmcli \
     --hidden-import mmcli.builder \
     --hidden-import mmcli.cli \
