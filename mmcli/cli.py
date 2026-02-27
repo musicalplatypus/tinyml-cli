@@ -41,6 +41,7 @@ TASK_TYPES_TIMESERIES = [
     "generic_timeseries_anomalydetection",
     "generic_timeseries_forecasting",
     "arc_fault",
+    "ecg_classification",
     "motor_fault",
     "blower_imbalance",
     "pir_detection",
@@ -49,10 +50,16 @@ TASK_TYPES_TIMESERIES = [
 TASK_TYPES_VISION = ["image_classification"]
 
 TARGET_DEVICES = [
+    # C2000
     "F280013", "F280015", "F28003", "F28004", "F2837",
-    "F28P55", "F28P65", "F29H85",
-    "MSPM0G3507", "MSPM0G5187", "CC2755",
-    "AM263",
+    "F28P55", "F28P65", "F29H85", "F29P58", "F29P32",
+    # MSPM0
+    "MSPM0G3507", "MSPM0G3519", "MSPM0G5187",
+    "MSPM33C32", "MSPM33C34",
+    # SimpleLink
+    "CC2755", "CC1352", "CC1354", "CC35X1",
+    # Sitara
+    "AM263", "AM263P", "AM261", "AM13E2",
 ]
 
 QUANTIZATION_OPTIONS = ["NO_QUANTIZATION", "QUANTIZATION_TINPU"]
@@ -185,7 +192,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
             "  generic_timeseries_regression\n"
             "  generic_timeseries_anomalydetection\n"
             "  generic_timeseries_forecasting\n"
-            "  arc_fault  motor_fault  blower_imbalance  pir_detection\n"
+            "  arc_fault  ecg_classification  motor_fault\n"
+            "  blower_imbalance  pir_detection\n"
             "Vision tasks:\n"
             "  image_classification"
         ),
@@ -196,9 +204,12 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         metavar="DEVICE",
         help=(
             "Target microcontroller device (required unless provided via --config).\n"
-            "C2000:  F280013  F280015  F28003  F28004  F2837  F28P55  F28P65  F29H85\n"
-            "MSPM0:  MSPM0G3507  MSPM0G5187\n"
-            "Other:  CC2755  AM263"
+            "C2000:     F280013  F280015  F28003  F28004  F2837\n"
+            "           F28P55  F28P65  F29H85  F29P58  F29P32\n"
+            "MSPM0:     MSPM0G3507  MSPM0G3519  MSPM0G5187\n"
+            "           MSPM33C32  MSPM33C34\n"
+            "SimpleLink: CC2755  CC1352  CC1354  CC35X1\n"
+            "Sitara:    AM263  AM263P  AM261  AM13E2"
         ),
     )
     parser.add_argument(
@@ -207,12 +218,21 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         metavar="MODEL_NAME",
         help=(
             "Model name from the catalog (required unless provided via --config).\n"
-            "Timeseries: TimeSeries_Generic_100_t  TimeSeries_Generic_1k_t\n"
-            "            TimeSeries_Generic_4k_t  TimeSeries_Generic_6k_t\n"
-            "            TimeSeries_Generic_13k_t\n"
-            "            ArcFault_model_200_t  ArcFault_model_1400_t\n"
-            "            MotorFault_model_1_t  FanImbalance_model_1_t\n"
-            "Vision:     Lenet5"
+            "Classification:\n"
+            "  NPU:   CLS_100_NPU  CLS_500_NPU  CLS_1k_NPU  CLS_2k_NPU\n"
+            "         CLS_4k_NPU  CLS_6k_NPU  CLS_8k_NPU  CLS_13k_NPU\n"
+            "         CLS_20k_NPU  CLS_55k_NPU  ECG_55k_NPU\n"
+            "  Res:   CLS_ResAdd_3k  CLS_ResCat_3k\n"
+            "  App:   ArcFault_model_{200,300,700,1400}_t\n"
+            "         MotorFault_model_{1,2,3}_t\n"
+            "         FanImbalance_model_{1,2,3}_t  PIRDetection_model_1_t\n"
+            "Regression:     REGR_{1k,2k,3k,4k,10k,13k}\n"
+            "                REGR_{500,2k,6k,8k,20k}_NPU\n"
+            "Anomaly:        AD_{1k,4k,16k,17k}  AD_Linear\n"
+            "                AD_{500,2k,6k,8k,10k,20k}_NPU\n"
+            "Forecasting:    FCST_{3k,13k}  FCST_LSTM{8,10}\n"
+            "                FCST_{500,1k,2k,4k,6k,8k,10k,20k}_NPU\n"
+            "Vision:         Lenet5"
         ),
     )
     parser.add_argument(
@@ -248,7 +268,7 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
         default=os.path.join("data", "projects", "default"),
         metavar="PROJECT_DIR",
         help=(
-            "Path to project directory (must contain dataset/ and project.json).\n"
+            "Path to project directory (must contain dataset/).\n"
             "Default: ./data/projects/default"
         ),
     )
@@ -291,16 +311,16 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--training-device",
         dest="training_device",
-        default=None,
+        default=detected,
         choices=TRAINING_DEVICES,
         metavar="BACKEND",
         help=(
             "Training backend to use.\n"
-            "  auto  Let tinyml_modelmaker detect (default)\n"
+            "  auto  Let tinyml_modelmaker detect\n"
             "  mps   Apple Metal (macOS)\n"
             "  cuda  NVIDIA GPU\n"
             "  cpu   CPU only\n"
-            f"Detected on this machine: {detected}"
+            f"Default (detected): {detected}"
         ),
     )
     group.add_argument(
@@ -486,25 +506,25 @@ def _validate_args(args: argparse.Namespace) -> None:
         project = os.path.abspath(project)
         args.project = project  # normalize to absolute
         dataset_dir = os.path.join(project, "dataset")
-        project_json = os.path.join(project, "project.json")
         annotations_dir = os.path.join(dataset_dir, "annotations")
-        classes_dir = os.path.join(dataset_dir, "classes")
+        # Data can live in classes/ (classification/anomaly), files/
+        # (regression/forecasting), or images/ (vision)
+        data_subdirs = ["classes", "files", "images"]
         if not os.path.isdir(project):
             errors.append(f"Project directory not found: {project}")
         elif not os.path.isdir(dataset_dir):
             errors.append(
                 f"Project directory missing 'dataset/' subdirectory: {project}")
-        elif not os.path.isfile(project_json):
-            errors.append(
-                f"Project directory missing 'project.json': {project}")
         else:
             # Validate dataset contents
             if not os.path.isdir(annotations_dir):
                 errors.append(
                     f"Dataset missing 'annotations/' subdirectory: {dataset_dir}")
-            if not os.path.isdir(classes_dir):
+            if not any(os.path.isdir(os.path.join(dataset_dir, d))
+                       for d in data_subdirs):
                 errors.append(
-                    f"Dataset missing 'classes/' subdirectory: {dataset_dir}")
+                    f"Dataset missing data subdirectory (one of "
+                    f"{', '.join(data_subdirs)}): {dataset_dir}")
 
     # Path existence checks
     if getattr(args, "onnx", None) and not os.path.isfile(args.onnx):

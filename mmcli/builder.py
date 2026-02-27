@@ -14,6 +14,9 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# Mirrors constants.COMPILATION_DEFAULT in tinyml-modelmaker
+COMPILATION_DEFAULT_PRESET = "default_preset"
+
 # ---------------------------------------------------------------------------
 # Minimal skeleton — every section that tinyml_modelmaker.main() reads
 # ---------------------------------------------------------------------------
@@ -43,7 +46,7 @@ _SKELETON: dict = {
     "compilation": {
         "enable": False,
         "model_path": None,
-        "compile_preset_name": "default_preset",
+        "compile_preset_name": COMPILATION_DEFAULT_PRESET,
     },
 }
 
@@ -107,7 +110,7 @@ def build_config(args) -> dict:
     _set(config, "common", "run_name", getattr(args, "run_name", None))
 
     # --- project directory → dataset paths ---
-    # -i/--project points to a project dir containing dataset/ and project.json.
+    # -i/--project points to a project dir containing dataset/.
     # We set input_data_path to the original data and train_output_path to a
     # separate "run" directory so that modelmaker creates a working copy
     # (symlinks) in project_dir/run/dataset rather than clobbering the original.
