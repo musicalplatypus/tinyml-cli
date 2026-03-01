@@ -66,6 +66,21 @@ QUANTIZATION_OPTIONS = ["NO_QUANTIZATION", "QUANTIZATION_TINPU"]
 
 TRAINING_DEVICES = ["auto", "mps", "cuda", "cpu"]
 
+NAS_SIZES = ["s", "m", "l", "xl"]
+
+NAS_OPTIMIZE_MODES = ["Memory", "Compute"]
+
+# Task types that support NAS (classification only)
+NAS_SUPPORTED_TASKS = [
+    "generic_timeseries_classification",
+    "arc_fault",
+    "ecg_classification",
+    "motor_fault",
+    "blower_imbalance",
+    "pir_detection",
+    "image_classification",
+]
+
 
 # ---------------------------------------------------------------------------
 # Metal / MPS detection
@@ -377,6 +392,52 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
 
+    # Neural Architecture Search (NAS)
+    nas = parser.add_argument_group(
+        "neural architecture search (NAS)",
+        description=(
+            "Automatically discover an optimal model architecture instead of\n"
+            "using a predefined model from the catalog. When --nas is used,\n"
+            "--model/-n is optional (a synthetic name is generated).\n"
+            "NAS is supported for classification tasks only."
+        ),
+    )
+    nas.add_argument(
+        "--nas",
+        dest="nas_size",
+        choices=NAS_SIZES,
+        default=None,
+        metavar="SIZE",
+        help=(
+            "Enable NAS with a model size preset.\n"
+            "  s   Small  — fast search, compact model\n"
+            "  m   Medium — balanced search\n"
+            "  l   Large  — deeper search, larger model\n"
+            "  xl  XL     — extensive search, largest model\n"
+            "When set, --model/-n becomes optional."
+        ),
+    )
+    nas.add_argument(
+        "--nas-epochs",
+        dest="nas_epochs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Number of NAS search epochs (default: 10).",
+    )
+    nas.add_argument(
+        "--nas-optimize",
+        dest="nas_optimize",
+        choices=NAS_OPTIMIZE_MODES,
+        default=None,
+        metavar="MODE",
+        help=(
+            "Resource optimization target for NAS.\n"
+            "  Memory   Prefer fewer parameters (default)\n"
+            "  Compute  Prefer fewer MACs (lower latency)"
+        ),
+    )
+
 
 def _add_compilation_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("compilation options")
@@ -518,15 +579,32 @@ def _validate_args(args: argparse.Namespace) -> None:
     if getattr(args, "config", None) and not os.path.isfile(args.config):
         errors.append(f"--config file not found: {args.config}")
 
+    # NAS mode: --model/-n is optional when --nas is set
+    using_nas = bool(getattr(args, "nas_size", None))
+
     # For fields that can come from --config, only enforce when --config not given
     using_config = bool(getattr(args, "config", None))
     if not using_config:
         for flag, attr in [("--module/-m", "module"), ("--task/-t", "task"),
-                           ("--device/-d", "device"), ("--model/-n", "model")]:
+                           ("--device/-d", "device")]:
             if not getattr(args, attr, None):
                 errors.append(f"{flag} is required when --config is not provided")
+        # --model/-n is required unless NAS is enabled
+        if not getattr(args, "model", None) and not using_nas:
+            errors.append(
+                "--model/-n is required when --config and --nas are not provided")
         if command == "compile" and not getattr(args, "onnx", None):
             errors.append("--onnx/-o is required when --config is not provided")
+
+    # NAS is only supported for classification tasks
+    if using_nas:
+        task = getattr(args, "task", None)
+        if task and task not in NAS_SUPPORTED_TASKS:
+            errors.append(
+                f"--nas is only supported for classification tasks, "
+                f"not '{task}'.\n"
+                f"  Supported: {', '.join(NAS_SUPPORTED_TASKS)}"
+            )
 
     # Validate project directory structure for train/run
     project = getattr(args, "project", None)

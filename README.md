@@ -71,7 +71,8 @@ bash build_macos.sh                   # → dist/mmcli  (~10 MB)
 Train a model and export `model.onnx`. Compilation is skipped.
 
 ```
-mmcli train -m MODULE -t TASK -d DEVICE -n MODEL -i DATA_PATH [options]
+mmcli train -m MODULE -t TASK -d DEVICE -n MODEL -i PROJECT_DIR [options]
+mmcli train -m MODULE -t TASK -d DEVICE --nas SIZE -i PROJECT_DIR [options]
 ```
 
 | Flag | Short | Description |
@@ -79,8 +80,8 @@ mmcli train -m MODULE -t TASK -d DEVICE -n MODEL -i DATA_PATH [options]
 | `--module` | `-m` | `timeseries` or `vision` |
 | `--task` | `-t` | Task type (see list below) |
 | `--device` | `-d` | Target device (e.g. `F28P55`) |
-| `--model` | `-n` | Model name from catalog |
-| `--data` | `-i` | Path to input data directory |
+| `--model` | `-n` | Model name from catalog (optional with `--nas`) |
+| `--project` | `-i` | Path to project directory containing `dataset/` |
 | `--config` | `-c` | Optional base YAML file (CLI args override) |
 | `--feature-extraction` | | Feature extraction preset name |
 | `--epochs` | | Training epochs |
@@ -92,6 +93,9 @@ mmcli train -m MODULE -t TASK -d DEVICE -n MODEL -i DATA_PATH [options]
 | `--output` | | Root output directory |
 | `--compile-model` | | `0` (default) or `1` to enable torch.compile (CUDA recommended) |
 | `--native-amp` | | Enable native mixed precision (CUDA recommended, not for MPS) |
+| `--nas` | | NAS model size preset: `s`, `m`, `l`, `xl` (classification only) |
+| `--nas-epochs` | | NAS search epochs (default: 10) |
+| `--nas-optimize` | | NAS resource target: `Memory` (default) or `Compute` |
 
 **Example:**
 ```bash
@@ -100,7 +104,7 @@ mmcli train \
   -t generic_timeseries_classification \
   -d F28P55 \
   -n TimeSeries_Generic_1k_t \
-  -i ./data/my_dataset \
+  -i ./data/my_project \
   --epochs 30 \
   --batch-size 256
 ```
@@ -171,6 +175,66 @@ mmcli train --config examples/hello_world/config.yaml \
 ```bash
 mmcli --verbose train ...
 ```
+
+---
+
+## Neural Architecture Search (NAS)
+
+Instead of picking a model from the catalog (`-n`), you can let NAS automatically
+discover an optimal architecture for your dataset. NAS is supported for
+**classification tasks only** (timeseries and vision).
+
+When `--nas` is set, `--model/-n` becomes optional — a synthetic name like
+`NAS_m` is generated automatically.
+
+### NAS flags
+
+| Flag | Description |
+|------|-------------|
+| `--nas SIZE` | Enable NAS with a model size preset: `s` (small), `m` (medium), `l` (large), `xl` (extra-large). Controls the search space complexity and resulting model size. |
+| `--nas-epochs N` | Number of NAS search epochs (default: 10). Higher values explore more architectures but take longer. |
+| `--nas-optimize MODE` | Resource optimization target: `Memory` (fewer parameters, default) or `Compute` (fewer MACs, lower latency). |
+
+### NAS examples
+
+```bash
+# Basic NAS — let the search find a medium-sized model
+mmcli train \
+  -m timeseries \
+  -t generic_timeseries_classification \
+  -d F28P55 \
+  -i ./data/my_project \
+  --nas m \
+  --epochs 50
+
+# NAS with explicit search budget and compute optimization
+mmcli train \
+  -m timeseries \
+  -t motor_fault \
+  -d F28P55 \
+  -i ./data/motor_project \
+  --nas l \
+  --nas-epochs 20 \
+  --nas-optimize Compute
+
+# NAS for vision classification
+mmcli train \
+  -m vision \
+  -t image_classification \
+  -d F29H85 \
+  -i ./data/image_project \
+  --nas s
+
+# Dry-run to inspect NAS config without running
+mmcli --dry-run train \
+  -m timeseries -t generic_timeseries_classification \
+  -d F28P55 -i ./data/my_project --nas m
+```
+
+### Supported tasks for NAS
+
+`generic_timeseries_classification` · `arc_fault` · `ecg_classification`
+`motor_fault` · `blower_imbalance` · `pir_detection` · `image_classification`
 
 ---
 

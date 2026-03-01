@@ -144,6 +144,19 @@ def build_config(args) -> dict:
     _set(config, "training", "compile_model", getattr(args, "compile_model", None))
     _set(config, "training", "native_amp", getattr(args, "native_amp", None))
 
+    # --- NAS (Neural Architecture Search) ---
+    nas_size = getattr(args, "nas_size", None)
+    if nas_size:
+        config["training"]["nas_enabled"] = True
+        config["training"]["nas_model_size"] = nas_size
+        _set(config, "training", "nas_epochs", getattr(args, "nas_epochs", None))
+        _set(config, "training", "nas_optimization_mode",
+             getattr(args, "nas_optimize", None))
+        # When NAS is enabled and no model name was given, generate a
+        # synthetic name so that output paths and logging still work.
+        if not config["training"].get("model_name"):
+            config["training"]["model_name"] = f"NAS_{nas_size}"
+
     # --training-device: map 'auto' → omit (let tinyml_modelmaker decide),
     # 'mps'/'cuda'/'cpu' → set training_device explicitly.
     # tinyml_modelmaker selects MPS when num_gpus > 0 and MPS is available,
