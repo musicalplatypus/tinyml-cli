@@ -380,16 +380,23 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
             "Best results on CUDA with inductor. May add overhead on MPS."
         ),
     )
-    perf.add_argument(
+    amp_group = perf.add_mutually_exclusive_group()
+    amp_group.add_argument(
         "--native-amp",
         dest="native_amp",
         action="store_true",
         default=None,
         help=(
             "Enable PyTorch native mixed precision (torch.amp.autocast).\n"
-            "Reduces memory and may improve throughput on CUDA.\n"
-            "Not recommended on MPS (adds overhead without benefit)."
+            "Reduces memory and may improve throughput.\n"
+            "Auto-enabled on MPS (Apple Silicon)."
         ),
+    )
+    amp_group.add_argument(
+        "--no-native-amp",
+        dest="native_amp",
+        action="store_false",
+        help="Disable native mixed precision (overrides MPS auto-enable).",
     )
 
     # Neural Architecture Search (NAS)
