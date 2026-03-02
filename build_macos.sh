@@ -38,6 +38,8 @@ pyinstaller \
     --hidden-import mmcli \
     --hidden-import mmcli.builder \
     --hidden-import mmcli.cli \
+    --hidden-import mmcli.info \
+    --hidden-import mmcli.about \
     "${SCRIPT_DIR}/mmcli/__main__.py"
 
 echo ""
