@@ -482,10 +482,10 @@ def _add_train_parser(subparsers) -> None:
             "On macOS, Apple Metal (MPS) is used automatically when available.\n\n"
             "Example:\n"
             "  mmcli train -m timeseries -t generic_timeseries_classification \\\n"
-            "              -d F28P55 -n TimeSeries_Generic_1k_t -i ./my_project\n\n"
+            "              -d F28P55 -n CLS_1k_NPU -i ./my_project\n\n"
             "  # Use default project (./data/projects/default):\n"
             "  mmcli train -m timeseries -t generic_timeseries_classification \\\n"
-            "              -d F28P55 -n TimeSeries_Generic_1k_t\n\n"
+            "              -d F28P55 -n CLS_1k_NPU\n\n"
             "  # Force CPU:\n"
             "  mmcli train ... --training-device cpu\n\n"
             "  # Explicit Metal:\n"
@@ -508,7 +508,7 @@ def _add_compile_parser(subparsers) -> None:
             "On macOS: train here, then compile on Linux.\n\n"
             "Example:\n"
             "  mmcli compile -m timeseries -t generic_timeseries_classification \\\n"
-            "                -d F28P55 -n TimeSeries_Generic_1k_t \\\n"
+            "                -d F28P55 -n CLS_1k_NPU \\\n"
             "                -o ./data/projects/my_run/model.onnx"
         ),
     )
@@ -529,7 +529,7 @@ def _add_run_parser(subparsers) -> None:
             "Note: compilation requires ti_mcu_nnc (Linux/Windows only).\n\n"
             "Example:\n"
             "  mmcli run -m timeseries -t generic_timeseries_classification \\\n"
-            "            -d F28P55 -n TimeSeries_Generic_1k_t -i ./my_project"
+            "            -d F28P55 -n CLS_1k_NPU -i ./my_project"
         ),
     )
     _add_common_args(p)

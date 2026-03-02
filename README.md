@@ -103,7 +103,7 @@ mmcli train \
   -m timeseries \
   -t generic_timeseries_classification \
   -d F28P55 \
-  -n TimeSeries_Generic_1k_t \
+  -n CLS_1k_NPU \
   -i ./data/my_project \
   --epochs 30 \
   --batch-size 256
@@ -131,7 +131,7 @@ mmcli compile \
   -m timeseries \
   -t generic_timeseries_classification \
   -d F28P55 \
-  -n TimeSeries_Generic_1k_t \
+  -n CLS_1k_NPU \
   -o ./data/projects/my_run/model.onnx
 ```
 
@@ -146,7 +146,7 @@ mmcli run \
   -m timeseries \
   -t generic_timeseries_classification \
   -d F28P55 \
-  -n TimeSeries_Generic_1k_t \
+  -n CLS_1k_NPU \
   -i ./data/my_dataset \
   --quantization QUANTIZATION_TINPU
 ```
@@ -160,7 +160,7 @@ mmcli run \
 ```bash
 mmcli --dry-run train \
   -m timeseries -t generic_timeseries_classification \
-  -d F28P55 -n TimeSeries_Generic_1k_t -i ./data
+  -d F28P55 -n CLS_1k_NPU -i ./data
 ```
 
 ### Override a base YAML config
@@ -255,10 +255,27 @@ mmcli --dry-run train \
 
 ## Example model names (timeseries)
 
-`TimeSeries_Generic_100_t` `TimeSeries_Generic_1k_t` `TimeSeries_Generic_4k_t`
-`TimeSeries_Generic_6k_t` `TimeSeries_Generic_13k_t`
-`ArcFault_model_200_t` `ArcFault_model_1400_t`
-`MotorFault_model_1_t` `FanImbalance_model_1_t`
+**Classification:** `CLS_100_NPU` `CLS_500_NPU` `CLS_1k_NPU` `CLS_2k_NPU`
+`CLS_4k_NPU` `CLS_6k_NPU` `CLS_8k_NPU` `CLS_13k_NPU` `CLS_20k_NPU`
+`CLS_55k_NPU` `CLS_ResAdd_3k` `CLS_ResCat_3k`
+
+**Regression:** `REGR_1k` `REGR_2k` `REGR_3k` `REGR_4k` `REGR_10k` `REGR_13k`
+`REGR_500_NPU` `REGR_2k_NPU` `REGR_6k_NPU` `REGR_8k_NPU` `REGR_20k_NPU`
+
+**Anomaly Detection:** `AD_1k` `AD_4k` `AD_16k` `AD_17k` `AD_Linear`
+`AD_500_NPU` `AD_2k_NPU` `AD_6k_NPU` `AD_8k_NPU` `AD_10k_NPU` `AD_20k_NPU`
+
+**Forecasting:** `FCST_3k` `FCST_13k` `FCST_LSTM8` `FCST_LSTM10`
+`FCST_500_NPU` `FCST_1k_NPU` `FCST_2k_NPU` `FCST_4k_NPU` `FCST_6k_NPU`
+`FCST_8k_NPU` `FCST_10k_NPU` `FCST_20k_NPU`
+
+**Application-specific:** `ArcFault_model_200_t` `ArcFault_model_300_t`
+`ArcFault_model_700_t` `ArcFault_model_1400_t`
+`MotorFault_model_1_t` `MotorFault_model_2_t` `MotorFault_model_3_t`
+`FanImbalance_model_1_t` `FanImbalance_model_2_t` `FanImbalance_model_3_t`
+`ECG_55k_NPU` `PIRDetection_model_1_t`
+
+> **Tip:** Run `mmcli info -m timeseries -t <task>` to see models available for a specific task.
 
 ---
 
