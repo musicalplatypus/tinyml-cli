@@ -298,5 +298,5 @@ that has `tinyml_modelmaker`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MMCLI_PYTHON` | `python` on PATH | Python interpreter with `tinyml_modelmaker` installed |
+| `MMCLI_PYTHON` | `python` or `python3` on PATH | Python interpreter with `tinyml_modelmaker` installed |
 | `MMCLI_MODELMAKER` | auto-detected | Path to tinyml-modelmaker source dir (only needed if auto-detection fails) |

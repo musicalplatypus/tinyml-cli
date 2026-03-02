@@ -11,7 +11,7 @@ Subcommands:
 Runtime requirements (not bundled in the binary):
   MMCLI_PYTHON  Path to the Python interpreter that has tinyml_modelmaker
                 installed, e.g. /path/to/venv/bin/python
-                Defaults to the 'python' found on PATH.
+                Defaults to 'python' or 'python3' found on PATH.
 
   MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory
                     (the folder containing tinyml_modelmaker/).
@@ -174,7 +174,15 @@ def _find_runner_script(python_exe: str) -> str:
 
 
 def _get_python_exe() -> str:
-    return os.environ.get("MMCLI_PYTHON", "python")
+    env = os.environ.get("MMCLI_PYTHON")
+    if env:
+        return env
+    # Try common Python executable names (macOS/Linux often lack 'python')
+    import shutil
+    for name in ("python", "python3"):
+        if shutil.which(name):
+            return name
+    return "python"  # fallback, will produce a clear error
 
 
 # ---------------------------------------------------------------------------
@@ -771,7 +779,7 @@ def main() -> None:
             f"Detected training backend: {detected}\n\n"
             "Environment variables:\n"
             "  MMCLI_PYTHON      Python interpreter with tinyml_modelmaker installed\n"
-            "                    Default: 'python' on PATH\n"
+            "                    Default: 'python' or 'python3' on PATH\n"
             "  MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory\n"
             "                    (auto-detected if MMCLI_PYTHON is set correctly)\n\n"
             "Run 'mmcli help' to see all subcommands and options at once.\n"
