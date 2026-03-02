@@ -579,6 +579,14 @@ def _add_info_parser(subparsers) -> None:
     )
 
 
+def _add_about_parser(subparsers) -> None:
+    subparsers.add_parser(
+        "about",
+        help="Show copyright, credits, and version information.",
+        description="Display copyright, version, and ASCII art.",
+    )
+
+
 def _add_help_parser(subparsers) -> None:
     subparsers.add_parser(
         "help",
@@ -775,6 +783,7 @@ def main() -> None:
             "  compile  Compile an existing ONNX file (Linux/Windows only)\n"
             "  run      Full pipeline: train then compile\n"
             "  info     Show supported devices, models, and presets\n"
+            "  about    Show copyright, credits, and version info\n"
             "  help     Show detailed help for all subcommands\n\n"
             f"Detected training backend: {detected}\n\n"
             "Environment variables:\n"
@@ -808,6 +817,7 @@ def main() -> None:
     _add_compile_parser(subparsers)
     _add_run_parser(subparsers)
     _add_info_parser(subparsers)
+    _add_about_parser(subparsers)
     _add_help_parser(subparsers)
 
     args = parser.parse_args()
@@ -815,9 +825,14 @@ def main() -> None:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Handle help and info subcommands before any other processing
+    # Handle help, info, and about subcommands before any other processing
     if args.command == "help":
         _print_full_help(parser)
+        sys.exit(0)
+
+    if args.command == "about":
+        from mmcli.about import run_about
+        run_about()
         sys.exit(0)
 
     if args.command == "info":

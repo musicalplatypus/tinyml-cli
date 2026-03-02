@@ -35,7 +35,7 @@ python3.10 -m venv ~/.venv-tinyml
 source ~/.venv-tinyml/bin/activate
 
 # Install tinyml_modelmaker
-pip install -e ~/Documents/repos/TexasInstruments/tinyml-tensorlab/tinyml-modelmaker
+pip install -e ~/Documents/repos/PlatypusVibes/tinyml-tensorlab/tinyml-modelmaker
 ```
 
 ### 2. Set the environment variable
@@ -55,7 +55,7 @@ cp dist/mmcli /usr/local/bin/mmcli   # or anywhere on your PATH
 
 **Option B — Build it yourself** (requires any Python + PyInstaller in an active venv):
 ```bash
-cd ~/Documents/repos/TexasInstruments/tinyml-cli
+cd ~/Documents/repos/PlatypusVibes/tinyml-cli
 source ~/.venv-ai/bin/activate        # any venv with PyInstaller
 pip install pyinstaller -q
 pip install -e .
@@ -154,6 +154,29 @@ mmcli run \
 ---
 
 ## Useful options
+
+### `mmcli info` — query the model registry
+
+Show supported task types, models, devices, and feature extraction presets.
+
+```
+mmcli info -m MODULE [-t TASK] [-d DEVICE]
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--module` | `-m` | `timeseries` or `vision` **(required)** |
+| `--task` | `-t` | Task type to show details for. Omit to list all task types. |
+| `--device` | `-d` | Target device to filter models. |
+
+**Examples:**
+```bash
+mmcli info -m timeseries                        # list task types
+mmcli info -m timeseries -t arc_fault           # details for arc_fault
+mmcli info -m timeseries -t arc_fault -d F28P55 # models for F28P55
+```
+
+---
 
 ### Dry run — inspect the generated YAML without running anything
 
