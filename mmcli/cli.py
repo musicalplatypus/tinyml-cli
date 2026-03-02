@@ -5,6 +5,7 @@ Subcommands:
   train    Train a model and export ONNX (no compilation)
   compile  Compile an existing ONNX file (no training)
   run      Full pipeline: train then compile
+  info     Show supported devices, models, and feature extraction presets
   help     Show detailed help for all subcommands
 
 Runtime requirements (not bundled in the binary):
@@ -536,6 +537,40 @@ def _add_run_parser(subparsers) -> None:
     _add_compilation_args(p)
 
 
+def _add_info_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "info",
+        help="Show supported devices, models, and feature extraction presets.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Query the model registry and display available options.\n\n"
+            "Examples:\n"
+            "  mmcli info -m timeseries                        # list task types\n"
+            "  mmcli info -m timeseries -t arc_fault           # details for arc_fault\n"
+            "  mmcli info -m timeseries -t arc_fault -d F28P55 # models for F28P55"
+        ),
+    )
+    p.add_argument(
+        "-m", "--module",
+        required=True,
+        choices=MODULES,
+        metavar="MODULE",
+        help="AI module (timeseries or vision).",
+    )
+    p.add_argument(
+        "-t", "--task",
+        default=None,
+        metavar="TASK_TYPE",
+        help="Task type to show details for. Omit to list all task types.",
+    )
+    p.add_argument(
+        "-d", "--device",
+        default=None,
+        metavar="DEVICE",
+        help="Target device to filter models.",
+    )
+
+
 def _add_help_parser(subparsers) -> None:
     subparsers.add_parser(
         "help",
@@ -731,6 +766,7 @@ def main() -> None:
             "  train    Train a model and export ONNX (uses Metal/MPS on macOS)\n"
             "  compile  Compile an existing ONNX file (Linux/Windows only)\n"
             "  run      Full pipeline: train then compile\n"
+            "  info     Show supported devices, models, and presets\n"
             "  help     Show detailed help for all subcommands\n\n"
             f"Detected training backend: {detected}\n\n"
             "Environment variables:\n"
@@ -763,6 +799,7 @@ def main() -> None:
     _add_train_parser(subparsers)
     _add_compile_parser(subparsers)
     _add_run_parser(subparsers)
+    _add_info_parser(subparsers)
     _add_help_parser(subparsers)
 
     args = parser.parse_args()
@@ -770,9 +807,14 @@ def main() -> None:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Handle help subcommand before any other processing
+    # Handle help and info subcommands before any other processing
     if args.command == "help":
         _print_full_help(parser)
+        sys.exit(0)
+
+    if args.command == "info":
+        from mmcli.info import run_info
+        run_info(args, _get_python_exe())
         sys.exit(0)
 
     _validate_args(args)
