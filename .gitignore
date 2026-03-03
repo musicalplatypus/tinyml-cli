@@ -6,3 +6,4 @@ build/
 *.spec
 .venv/
 venv/
+.DS_Store

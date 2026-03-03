@@ -283,6 +283,18 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     # Note: --output removed; projects_path is now derived from the -i/--project path.
     # The project directory IS the project_path, and its parent is projects_path.
 
+    # Report generation
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        default=False,
+        help=(
+            "Generate a live-updating HTML training report with\n"
+            "accuracy/loss charts and confusion matrix.\n"
+            "Output: <project_dir>/run/report.html"
+        ),
+    )
+
 
 def _add_training_args(parser: argparse.ArgumentParser) -> None:
     detected = _detect_training_device()
@@ -733,13 +745,21 @@ def _validate_config(config: dict) -> None:
 # Dispatch to tinyml_modelmaker via subprocess
 # ---------------------------------------------------------------------------
 
-def _dispatch(config: dict, python_exe: str, verbose: bool) -> int:
+def _dispatch(config: dict, python_exe: str, verbose: bool,
+              report_path: str = None) -> int:
     """Write config to a temp YAML and invoke run_tinyml_modelmaker.py."""
     try:
         runner_script = _find_runner_script(python_exe)
     except (FileNotFoundError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+
+    # Set up report handler if requested
+    feed_line = finalize = None
+    if report_path:
+        from mmcli.report import create_report_handler
+        feed_line, finalize = create_report_handler(report_path)
+        logger.info("Report will be written to: %s", report_path)
 
     yaml_path = None
     try:
@@ -752,8 +772,24 @@ def _dispatch(config: dict, python_exe: str, verbose: bool) -> int:
         if verbose:
             print(f"Running: {' '.join(cmd)}", flush=True)
 
-        result = subprocess.run(cmd, check=False)
-        return result.returncode
+        if feed_line:
+            # Capture stdout/stderr line-by-line for report generation
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            for line in proc.stdout:
+                print(line, end='', flush=True)
+                feed_line(line)
+            proc.wait()
+            finalize()
+            return proc.returncode
+        else:
+            result = subprocess.run(cmd, check=False)
+            return result.returncode
     finally:
         if yaml_path:
             try:
@@ -851,5 +887,19 @@ def main() -> None:
         sys.exit(0)
 
     python_exe = _get_python_exe()
-    rc = _dispatch(config, python_exe, verbose=args.verbose)
+
+    # Determine report output path if --report is enabled
+    report_path = None
+    if getattr(args, 'report', False):
+        train_output = config.get('training', {}).get('train_output_path')
+        if train_output:
+            report_path = os.path.join(train_output, 'report.html')
+        else:
+            project = getattr(args, 'project', None)
+            if project:
+                report_path = os.path.join(os.path.abspath(project), 'run', 'report.html')
+            else:
+                report_path = 'report.html'
+
+    rc = _dispatch(config, python_exe, verbose=args.verbose, report_path=report_path)
     sys.exit(rc)

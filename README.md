@@ -94,6 +94,7 @@ mmcli train -m MODULE -t TASK -d DEVICE --nas SIZE -i PROJECT_DIR [options]
 | `--output` | | Root output directory |
 | `--compile-model` | | `0` (default) or `1` to enable torch.compile (CUDA recommended) |
 | `--native-amp` | | Enable native mixed precision (CUDA recommended, not for MPS) |
+| `--report` | | Generate a live-updating HTML training report (charts + confusion matrix) |
 | `--nas` | | NAS model size preset: `s`, `m`, `l`, `xl` (classification only) |
 | `--nas-epochs` | | NAS search epochs (default: 10) |
 | `--nas-optimize` | | NAS resource target: `Memory` (default) or `Compute` |
@@ -199,6 +200,26 @@ mmcli train --config examples/hello_world/config.yaml \
 ```bash
 mmcli --verbose train ...
 ```
+
+### Training report
+
+Generate a self-contained HTML report with live-updating accuracy/loss charts
+and a heatmap confusion matrix:
+
+```bash
+mmcli train \
+  -m timeseries \
+  -t generic_timeseries_classification \
+  -d F28P55 \
+  -n CLS_1k_NPU \
+  -i ./data/my_project \
+  --report
+```
+
+The report is written to `<project_dir>/run/report.html` and auto-refreshes
+every 5 seconds while training is in progress. Once training completes, the
+auto-refresh is removed and the final report includes the confusion matrix
+and file-level classification summary (if available).
 
 ---
 
