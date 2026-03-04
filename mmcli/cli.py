@@ -442,7 +442,8 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
             "  m   Medium — balanced search\n"
             "  l   Large  — deeper search, larger model\n"
             "  xl  XL     — extensive search, largest model\n"
-            "When set, --model/-n becomes optional."
+            "When set, --model/-n becomes optional.\n"
+            "For timeseries tasks you must also set --feature-extraction."
         ),
     )
     nas.add_argument(

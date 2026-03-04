@@ -232,24 +232,48 @@ discover an optimal architecture for your dataset. NAS is supported for
 When `--nas` is set, `--model/-n` becomes optional — a synthetic name like
 `NAS_m` is generated automatically.
 
+### Feature extraction with NAS
+
+> **Important:** For timeseries tasks, you **must** specify `--feature-extraction`
+> with a preset that is appropriate for your dataset when using `--nas`.
+>
+> With catalog models (`-n`), the feature extraction configuration is provided
+> automatically by the model description. NAS has no catalog entry, so the
+> pipeline does not know which feature extraction to apply. Without this flag,
+> training will fail with *"Not enough dimensions present"* because the raw
+> sensor data has not been transformed into the feature representation that
+> the classification pipeline expects.
+
+To see which feature extraction presets are available for your task:
+
+```bash
+mmcli info -m timeseries -t generic_timeseries_classification
+```
+
+Common presets for generic timeseries classification include:
+- `Generic_256Input_FFTBIN_16Feature_8Frame`
+- `Generic_1024Input_FFTBIN_32Feature_32Frame`
+
 ### NAS flags
 
 | Flag | Description |
 |------|-------------|
 | `--nas SIZE` | Enable NAS with a model size preset: `s` (small), `m` (medium), `l` (large), `xl` (extra-large). Controls the search space complexity and resulting model size. |
-| `--nas-epochs N` | Number of NAS search epochs (default: 10). Higher values explore more architectures but take longer. |
+| `--nas-epochs N` | NAS search epochs (default: 10). Higher values explore more architectures but take longer. |
 | `--nas-optimize MODE` | Resource optimization target: `Memory` (fewer parameters, default) or `Compute` (fewer MACs, lower latency). |
+| `--feature-extraction` | Feature extraction preset **(required for timeseries NAS)**. Use `mmcli info` to list available presets. |
 
 ### NAS examples
 
 ```bash
-# Basic NAS — let the search find a medium-sized model
+# Basic NAS — medium-sized model with feature extraction
 mmcli train \
   -m timeseries \
   -t generic_timeseries_classification \
   -d F28P55 \
   -i ./data/my_project \
   --nas m \
+  --feature-extraction Generic_256Input_FFTBIN_16Feature_8Frame \
   --epochs 50
 
 # NAS with explicit search budget and compute optimization
@@ -260,9 +284,10 @@ mmcli train \
   -i ./data/motor_project \
   --nas l \
   --nas-epochs 20 \
-  --nas-optimize Compute
+  --nas-optimize Compute \
+  --feature-extraction Generic_256Input_FFTBIN_16Feature_8Frame
 
-# NAS for vision classification
+# NAS for vision classification (no --feature-extraction needed)
 mmcli train \
   -m vision \
   -t image_classification \
@@ -273,7 +298,8 @@ mmcli train \
 # Dry-run to inspect NAS config without running
 mmcli --dry-run train \
   -m timeseries -t generic_timeseries_classification \
-  -d F28P55 -i ./data/my_project --nas m
+  -d F28P55 -i ./data/my_project --nas m \
+  --feature-extraction Generic_256Input_FFTBIN_16Feature_8Frame
 ```
 
 ### Supported tasks for NAS
