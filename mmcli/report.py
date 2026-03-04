@@ -1014,7 +1014,9 @@ class HTMLReportGenerator:
             parts.append(f'{len(float_epochs)} float epochs')
         if quant_epochs:
             parts.append(f'{len(quant_epochs)} quant epochs')
-        subtitle = ' · '.join(parts) if parts else 'Waiting for training data…'
+        subtitle = ' · '.join(parts) if parts else (
+            'NAS architecture search starting…' if parser.is_nas else 'Waiting for training data…'
+        )
 
         # Render
         task = parser.task_type or 'classification'
@@ -1025,11 +1027,13 @@ class HTMLReportGenerator:
         # NAS search cards (always first if NAS was used)
         if parser.is_nas:
             # Progress info
-            if parser.nas_budget:
-                progress = f'{len(parser.nas_epochs)}/{parser.nas_budget}'
+            n_nas = len(parser.nas_epochs)
+            if n_nas == 0 and not is_complete:
+                cards.append(('NAS Search', 'Searching…', 'accent3'))
+            elif parser.nas_budget:
+                cards.append(('NAS Search', f'{n_nas}/{parser.nas_budget} epochs', 'accent3'))
             else:
-                progress = str(len(parser.nas_epochs))
-            cards.append(('NAS Search', f'{progress} epochs', 'accent3'))
+                cards.append(('NAS Search', f'{n_nas} epochs', 'accent3'))
 
             if parser.nas_best.get('acc') is not None:
                 cards.append(('NAS Best Acc', f"{parser.nas_best['acc']:.1f}%", 'accent3'))
@@ -1265,6 +1269,17 @@ class HTMLReportGenerator:
                 datasets=','.join(nas_ds),
             )
 
+        elif parser.is_nas and not is_complete:
+            # NAS enabled but no epoch data yet — show placeholder chart section
+            nas_chart_html = (
+                '<div class="chart-section">'
+                '<h2>NAS Architecture Search</h2>'
+                '<div style="display:flex;align-items:center;justify-content:center;'
+                'height:200px;color:var(--text-dim);font-size:14px;">'
+                'Searching for optimal architecture…</div>'
+                '</div>'
+            )
+
         # Render
         html = _HTML_TEMPLATE.format(
             auto_refresh=auto_refresh,
@@ -1287,7 +1302,7 @@ class HTMLReportGenerator:
             f.write(html)
 
 
-def create_report_handler(report_path: str):
+def create_report_handler(report_path: str, nas_enabled: bool = False):
     """
     Create a line handler for use with subprocess stdout capture.
 
@@ -1296,8 +1311,10 @@ def create_report_handler(report_path: str):
       - finalize_fn() -> None: call when training is complete
     """
     parser = TrainingLogParser()
+    if nas_enabled:
+        parser.is_nas = True
     generator = HTMLReportGenerator(report_path)
-    # Generate initial empty report
+    # Generate initial report (shows NAS placeholders if nas_enabled)
     generator.generate(parser, is_complete=False)
 
     def feed_line(line: str) -> None:
@@ -1309,3 +1326,4 @@ def create_report_handler(report_path: str):
         generator.generate(parser, is_complete=True)
 
     return feed_line, finalize
+

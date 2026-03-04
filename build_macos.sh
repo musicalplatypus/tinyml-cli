@@ -28,6 +28,13 @@ if ! python -c "import PyInstaller" 2>/dev/null; then
     pip install pyinstaller
 fi
 
+# Install mmcli into site-packages (non-editable, so PyInstaller can find it).
+# Always reinstall to pick up latest source changes.
+echo "Installing mmcli into site-packages..."
+pip install "${SCRIPT_DIR}" --force-reinstall --no-deps -q
+
+python -c "import mmcli; print(mmcli.__file__)"
+
 # Clean previous build artifacts
 rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}/dist/mmcli" "${SCRIPT_DIR}/mmcli.spec"
 
@@ -35,13 +42,32 @@ pyinstaller \
     --onefile \
     --name mmcli \
     --target-arch "${ARCH}" \
-    --hidden-import mmcli \
-    --hidden-import mmcli.builder \
-    --hidden-import mmcli.cli \
-    --hidden-import mmcli.info \
-    --hidden-import mmcli.about \
-    --hidden-import mmcli.report \
+    --paths "${SCRIPT_DIR}" \
+    --collect-submodules mmcli \
+    --add-data "${SCRIPT_DIR}/mmcli/example_datasets:mmcli/example_datasets" \
     "${SCRIPT_DIR}/mmcli/__main__.py"
+
+# Verify the binary contains mmcli modules
+echo ""
+echo "Verifying binary contents..."
+python -c "
+import os, tempfile
+from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
+arch = CArchiveReader('${SCRIPT_DIR}/dist/mmcli')
+pyz_data = arch.extract('PYZ.pyz')
+tmp = tempfile.NamedTemporaryFile(suffix='.pyz', delete=False)
+tmp.write(pyz_data[1] if isinstance(pyz_data, tuple) else pyz_data)
+tmp.close()
+pyz = ZlibArchiveReader(tmp.name)
+entries = [k for k in pyz.toc.keys() if k.startswith('mmcli')]
+os.unlink(tmp.name)
+print(f'  mmcli modules bundled: {len(entries)}')
+for e in sorted(entries):
+    print(f'    {e}')
+if not entries:
+    print('  ERROR: No mmcli modules found in binary!')
+    exit(1)
+"
 
 echo ""
 echo "Build complete: ${SCRIPT_DIR}/dist/mmcli"
@@ -53,3 +79,4 @@ echo "  ./dist/mmcli --help"
 echo "  ./dist/mmcli train --help"
 echo "  ./dist/mmcli --dry-run train -m timeseries -t generic_timeseries_classification \\"
 echo "      -d F28P55 -n CLS_1k_NPU -i ./data"
+

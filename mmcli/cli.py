@@ -797,7 +797,7 @@ def _validate_config(config: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _dispatch(config: dict, python_exe: str, verbose: bool,
-              report_path: str = None) -> int:
+              report_path: str = None, nas_enabled: bool = False) -> int:
     """Write config to a temp YAML and invoke run_tinyml_modelmaker.py."""
     try:
         runner_script = _find_runner_script(python_exe)
@@ -809,7 +809,7 @@ def _dispatch(config: dict, python_exe: str, verbose: bool,
     feed_line = finalize = None
     if report_path:
         from mmcli.report import create_report_handler
-        feed_line, finalize = create_report_handler(report_path)
+        feed_line, finalize = create_report_handler(report_path, nas_enabled=nas_enabled)
         logger.info("Report will be written to: %s", report_path)
 
     yaml_path = None
@@ -963,5 +963,7 @@ def main() -> None:
             else:
                 report_path = 'report.html'
 
-    rc = _dispatch(config, python_exe, verbose=args.verbose, report_path=report_path)
+    nas_enabled = getattr(args, 'nas_size', None) is not None
+    rc = _dispatch(config, python_exe, verbose=args.verbose,
+                   report_path=report_path, nas_enabled=nas_enabled)
     sys.exit(rc)
