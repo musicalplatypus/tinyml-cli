@@ -255,6 +255,24 @@ def _print_task_details(data: dict, task_type: str,
     else:
         print("  (none found)")
 
+    # --- Example Datasets ---
+    from mmcli.datasets import list_datasets
+    datasets = list_datasets(task_type=task_type)
+    print(f"Example Datasets ({len(datasets)} available):")
+    if datasets:
+        name_width = max(len(d["name"]) for d in datasets) + 2
+        name_width = max(name_width, 6)
+        print(f"  {'Name':<{name_width}}  Description")
+        print(f"  {'─' * name_width}  {'─' * 40}")
+        for d in sorted(datasets, key=lambda x: x["name"]):
+            desc = d.get("description", "")
+            print(f"  {d['name']:<{name_width}}  {desc}")
+    else:
+        print("  (none available)")
+    print()
+    print(f"To create a project from a dataset:")
+    print(f"  mmcli init -t {task_type} --dataset <DATASET_NAME> -p <PROJECT_DIR>")
+
     print()
 
 

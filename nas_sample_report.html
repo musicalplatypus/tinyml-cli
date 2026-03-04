@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>mmcli Training Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242837;
+    --border: #2e3348;
+    --text: #e4e6f0;
+    --text-dim: #8b8fa3;
+    --accent: #6c63ff;
+    --accent2: #00d4aa;
+    --accent3: #ff6b8a;
+    --float-color: #6c63ff;
+    --quant-color: #00d4aa;
+    --success: #00d4aa;
+    --danger: #ff6b8a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); padding:24px; min-height:100vh; }
+  .container { max-width:1200px; margin:0 auto; }
+  h1 { font-size:28px; font-weight:700; margin-bottom:4px; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .subtitle { color:var(--text-dim); font-size:14px; margin-bottom:32px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:32px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; }
+  .card .label { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); margin-bottom:8px; }
+  .card .value { font-size:24px; font-weight:600; }
+  .card .value.accent { color:var(--accent); }
+  .card .value.accent2 { color:var(--accent2); }
+  .card .value.accent3 { color:var(--accent3); }
+  .chart-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .chart-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; color:var(--text); }
+  .chart-container { position:relative; height:320px; }
+  .conf-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .conf-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; }
+  .conf-phase { margin-bottom:24px; }
+  .conf-phase h3 { font-size:15px; font-weight:500; margin-bottom:12px; color:var(--text-dim); }
+  table.conf { border-collapse:collapse; width:auto; font-size:13px; }
+  table.conf th, table.conf td { padding:10px 14px; text-align:center; border:1px solid var(--border); }
+  table.conf th { background:var(--surface2); font-weight:500; color:var(--text-dim); }
+  table.conf td.label-cell { text-align:left; font-weight:500; background:var(--surface2); color:var(--text-dim); white-space:nowrap; }
+  .flcs-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .flcs-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; }
+  table.flcs { border-collapse:collapse; width:100%; font-size:13px; }
+  table.flcs th { background:var(--surface2); font-weight:500; color:var(--text-dim); padding:10px 12px; text-align:left; border:1px solid var(--border); white-space:nowrap; }
+  table.flcs td { padding:8px 12px; border:1px solid var(--border); }
+  table.flcs tr:hover { background:var(--surface2); }
+  table.flcs a { color:var(--accent); text-decoration:none; }
+  table.flcs a:hover { text-decoration:underline; }
+  table.flcs .correct { color:var(--success); font-weight:500; }
+  table.flcs .incorrect { color:var(--danger); font-weight:500; }
+  .pca-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .pca-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; }
+  .pca-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap:20px; }
+  .pca-grid figure { margin:0; text-align:center; }
+  .pca-grid img { max-width:100%; height:auto; border-radius:8px; border:1px solid var(--border); }
+  .pca-grid figcaption { color:var(--text-dim); font-size:13px; margin-top:8px; }
+  .status { display:inline-block; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:500; }
+  .status.training { background:rgba(108,99,255,0.15); color:var(--accent); }
+  .status.complete { background:rgba(0,212,170,0.15); color:var(--accent2); }
+  .footer { text-align:center; color:var(--text-dim); font-size:12px; margin-top:40px; padding-top:20px; border-top:1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <h1>mmcli Training Report</h1>
+    <span class="status complete">Complete</span>
+  </div>
+  <div class="subtitle">5 NAS search epochs · 4 float epochs</div>
+
+  <div class="cards">
+    <div class="card"><div class="label">NAS Search</div><div class="value accent3">5/20 epochs</div></div>
+<div class="card"><div class="label">NAS Best Acc</div><div class="value accent3">72.9%</div></div>
+<div class="card"><div class="label">Best @ Epoch</div><div class="value">4</div></div>
+<div class="card"><div class="label">NAS Device</div><div class="value">MPS</div></div>
+<div class="card"><div class="label">Search Model</div><div class="value">0.013 MB</div></div>
+<div class="card"><div class="label">Final Params</div><div class="value accent">1,983</div></div>
+<div class="card"><div class="label">Final Size</div><div class="value accent">0.08 MB</div></div>
+<div class="card"><div class="label">Float Best Acc</div><div class="value accent">85.0%</div></div>
+<div class="card"><div class="label">Float Epochs</div><div class="value">4</div></div>
+<div class="card"><div class="label">Float Latest Loss</div><div class="value">0.4200</div></div>
+<div class="card"><div class="label">Best Float Epoch</div><div class="value accent">3</div></div>
+<div class="card"><div class="label">Float AUC ROC</div><div class="value">0.970</div></div>
+
+  </div>
+
+  <div class="chart-section"><h2>NAS Architecture Search</h2><div class="chart-container"><canvas id="nasChart"></canvas></div><div style="margin-top:16px;padding:16px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);"><h3 style="font-size:14px;font-weight:600;color:var(--accent3);margin-bottom:8px;">Discovered Architecture</h3><div style="display:flex;flex-wrap:wrap;gap:6px;"><span style="padding:4px 10px;border-radius:6px;font-size:12px;background:rgba(255,107,138,0.12);color:var(--accent3);border:1px solid rgba(255,107,138,0.25);">conv_bn_relu_3x1</span><span style="padding:4px 10px;border-radius:6px;font-size:12px;background:rgba(255,107,138,0.12);color:var(--accent3);border:1px solid rgba(255,107,138,0.25);">sep_conv_3x1</span><span style="padding:4px 10px;border-radius:6px;font-size:12px;background:rgba(255,107,138,0.12);color:var(--accent3);border:1px solid rgba(255,107,138,0.25);">skip_connect</span><span style="padding:4px 10px;border-radius:6px;font-size:12px;background:rgba(255,107,138,0.12);color:var(--accent3);border:1px solid rgba(255,107,138,0.25);">dil_conv_5x1</span><span style="padding:4px 10px;border-radius:6px;font-size:12px;background:rgba(255,107,138,0.12);color:var(--accent3);border:1px solid rgba(255,107,138,0.25);">avg_pool_3x1</span><span style="padding:4px 10px;border-radius:6px;font-size:12px;background:rgba(255,107,138,0.12);color:var(--accent3);border:1px solid rgba(255,107,138,0.25);">max_pool_3x1</span></div></div></div>
+
+  <div class="chart-section">
+    <h2>Training Metrics</h2>
+    <div class="chart-container"><canvas id="metricsChart"></canvas></div>
+  </div>
+
+  
+
+  
+
+  
+
+  <div class="footer">Generated by mmcli · Musical Platypus Vibes © 2026</div>
+</div>
+
+<script>
+const chartOpts = {
+  responsive:true, maintainAspectRatio:false,
+  plugins:{ legend:{ labels:{ color:'#8b8fa3',font:{family:'Inter'} } } },
+  scales:{
+    x:{ title:{display:true,text:'Epoch',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },
+    y:{ grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} }
+  }
+};
+
+// Combined metrics chart (dual Y-axes)
+new Chart(document.getElementById('metricsChart'), {
+  type:'line',
+  data:{
+    labels:[0, 1, 2, 3],
+    datasets:[
+      {label:'Float Val Accuracy',data:[60.0, 72.0, 80.0, 85.0],borderColor:'#6c63ff',backgroundColor:'#6c63ff22',tension:0.3,pointRadius:2,borderWidth:2,yAxisID:'y',fill:false},
+      {label:'Float Train Accuracy',data:[55.0, 70.0, 78.0, 83.0],borderColor:'#6c63ff',backgroundColor:'#6c63ff22',tension:0.3,pointRadius:2,borderWidth:2,borderDash:[5,5],yAxisID:'y',fill:false},
+      {label:'Float Loss',data:[0.85, 0.65, 0.52, 0.42],borderColor:'#ff6b8a',backgroundColor:'#ff6b8a22',tension:0.3,pointRadius:2,borderWidth:2,yAxisID:'y1',fill:false}
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    interaction:{ mode:'index', intersect:false },
+    plugins:{ legend:{ labels:{ color:'#8b8fa3',font:{family:'Inter'} } } },
+    scales:{
+      x:{ title:{display:true,text:'Epoch',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },
+      y:{ type:'linear', position:'left', title:{display:true,text:'Accuracy (%)',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },
+      y1:{ type:'linear', position:'right', title:{display:true,text:'Loss',color:'#8b8fa3',font:{family:'Inter'}}, grid:{drawOnChartArea:false}, ticks:{color:'#8b8fa3'} }
+    }
+  }
+});
+
+new Chart(document.getElementById('nasChart'), {  type:'line',  data:{ labels:[0, 1, 2, 3, 4], datasets:[{label:'Train Accuracy',data:[52.34, 64.56, 72.34, 78.12, 80.45],borderColor:'#ffa726',backgroundColor:'#ffa72622',tension:0.3,pointRadius:2,borderWidth:2,yAxisID:'y',fill:false},{label:'Test Accuracy',data:[48.12, 58.23, 65.43, 70.56, 72.89],borderColor:'#ff6b8a',backgroundColor:'#ff6b8a22',tension:0.3,pointRadius:2,borderWidth:2,yAxisID:'y',fill:false}] },  options:{    responsive:true, maintainAspectRatio:false,    interaction:{ mode:'index', intersect:false },    plugins:{ legend:{ labels:{ color:'#8b8fa3',font:{family:'Inter'} } } },    scales:{      x:{ title:{display:true,text:'Search Epoch',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },      y:{ type:'linear', position:'left', title:{display:true,text:'Accuracy (%)',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} }    }  }});
+</script>
+</body>
+</html>

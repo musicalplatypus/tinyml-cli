@@ -155,6 +155,18 @@ _RE_NAS_DEVICE = re.compile(r'NAS device:\s*(\S+)')
 # NAS param size: "param size = 0.013075MB"
 _RE_NAS_PARAM_SIZE = re.compile(r'param size\s*=\s*([\d.]+)MB')
 
+# NAS genotype: captures the ops from "genotype = Genotype_CNN(normal=[('skip_connect', 0), ...])"
+_RE_NAS_GENOTYPE = re.compile(r'genotype\s*=\s*(Genotype_CNN\(.*\))')
+
+# Model summary from torchinfo: "Total params: 1,983"
+_RE_TOTAL_PARAMS = re.compile(r'Total params:\s*([\d,]+)')
+
+# Estimated model size from torchinfo: "Estimated Total Size (MB): 0.08"
+_RE_MODEL_SIZE = re.compile(r'Estimated Total Size \(MB\):\s*([\d.]+)')
+
+# NAS budget/epochs: "nas_budget=20" or "nas_epochs=20" in args dump
+_RE_NAS_BUDGET = re.compile(r'nas_budget[=:]\s*(\d+)')
+
 
 class TrainingLogParser:
     """Parse tinyml_modelmaker training log lines incrementally."""
@@ -184,6 +196,11 @@ class TrainingLogParser:
         self.nas_param_size = None   # search model size in MB
         self._nas_pending = {}       # accumulate NAS epoch data
         self._nas_last_step = {}     # last per-step data for progress display
+        self.nas_genotype = None     # latest genotype string
+        self.nas_best_genotype = None  # genotype at best epoch
+        self.nas_budget = None       # total NAS search budget (epochs)
+        self.nas_model_params = None  # total params in discovered model
+        self.nas_model_size = None   # estimated model size (MB)
 
     def feed_line(self, line: str) -> bool:
         """
@@ -411,6 +428,23 @@ class TrainingLogParser:
             self.dataset_path = dp.group(1).strip()
             return False
 
+        # Torchinfo model summary (captured when NAS is active)
+        if self.is_nas:
+            tp = _RE_TOTAL_PARAMS.search(message)
+            if tp:
+                self.nas_model_params = int(tp.group(1).replace(',', ''))
+                return False
+            ms = _RE_MODEL_SIZE.search(message)
+            if ms:
+                self.nas_model_size = float(ms.group(1))
+                return True
+
+        # NAS budget from args dump (comes from root.main, not NAS logger)
+        bm = _RE_NAS_BUDGET.search(line)
+        if bm:
+            self.nas_budget = int(bm.group(1))
+            return False
+
         return False
 
     def _flush_pending_eval(self):
@@ -518,7 +552,16 @@ class TrainingLogParser:
                 'epoch': int(bg.group(1)),
                 'acc': float(bg.group(2)),
             }
+            # Snapshot the latest genotype as the best
+            if self.nas_genotype:
+                self.nas_best_genotype = self.nas_genotype
             return True
+
+        # Genotype dump (logged each epoch)
+        gm = _RE_NAS_GENOTYPE.search(message)
+        if gm:
+            self.nas_genotype = gm.group(1)
+            return False
 
         return False
 
@@ -679,6 +722,24 @@ def _make_dataset_js(label: str, data: list, color: str, dashed: bool = False, y
         f"backgroundColor:'{color}22',tension:0.3,pointRadius:2,"
         f"borderWidth:2,{dash}yAxisID:'{yaxis}',fill:false}}"
     )
+
+
+def _extract_genotype_ops(genotype_str: str) -> list:
+    """Extract unique operation names from a Genotype_CNN string.
+
+    E.g. from "Genotype_CNN(normal=[('skip_connect', 0), ('conv_bn_relu_3x1', 0), ...]"
+    returns ['skip_connect', 'conv_bn_relu_3x1', 'max_pool_3x1', ...]
+    """
+    # Match both single and double quoted operation names
+    ops = re.findall(r'["\']([a-z][a-z_\d]*)["\']', genotype_str)
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for op in ops:
+        if op not in seen:
+            seen.add(op)
+            unique.append(op)
+    return unique
 
 
 def _conf_matrix_to_html(matrix: dict, title: str) -> str:
@@ -963,13 +1024,31 @@ class HTMLReportGenerator:
 
         # NAS search cards (always first if NAS was used)
         if parser.is_nas:
-            cards.append(('NAS Search', f'{len(parser.nas_epochs)} epochs', 'accent3'))
+            # Progress info
+            if parser.nas_budget:
+                progress = f'{len(parser.nas_epochs)}/{parser.nas_budget}'
+            else:
+                progress = str(len(parser.nas_epochs))
+            cards.append(('NAS Search', f'{progress} epochs', 'accent3'))
+
             if parser.nas_best.get('acc') is not None:
                 cards.append(('NAS Best Acc', f"{parser.nas_best['acc']:.1f}%", 'accent3'))
+                cards.append(('Best @ Epoch', str(parser.nas_best['epoch']), ''))
+
+            # Live ETA from last step
+            if parser._nas_last_step.get('eta') and not parser.float_epochs:
+                cards.append(('Search ETA', parser._nas_last_step['eta'], ''))
+
             if parser.nas_device:
                 cards.append(('NAS Device', parser.nas_device.upper(), ''))
             if parser.nas_param_size is not None:
                 cards.append(('Search Model', f'{parser.nas_param_size:.3f} MB', ''))
+
+            # Discovered model info (appears after training starts)
+            if parser.nas_model_params is not None:
+                cards.append(('Final Params', f'{parser.nas_model_params:,}', 'accent'))
+            if parser.nas_model_size is not None:
+                cards.append(('Final Size', f'{parser.nas_model_size} MB', 'accent'))
 
         if task == 'classification':
             if float_epochs:
@@ -1140,8 +1219,27 @@ class HTMLReportGenerator:
                 '<div class="chart-section">'
                 '<h2>NAS Architecture Search</h2>'
                 '<div class="chart-container"><canvas id="nasChart"></canvas></div>'
-                '</div>'
             )
+            # Add discovered architecture info below the chart
+            if parser.nas_best_genotype:
+                ops = _extract_genotype_ops(parser.nas_best_genotype)
+                if ops:
+                    nas_chart_html += (
+                        '<div style="margin-top:16px;padding:16px;background:var(--surface2);'
+                        'border-radius:8px;border:1px solid var(--border);">'
+                        '<h3 style="font-size:14px;font-weight:600;color:var(--accent3);'
+                        'margin-bottom:8px;">Discovered Architecture</h3>'
+                        '<div style="display:flex;flex-wrap:wrap;gap:6px;">'
+                    )
+                    for op in ops:
+                        nas_chart_html += (
+                            f'<span style="padding:4px 10px;border-radius:6px;'
+                            f'font-size:12px;background:rgba(255,107,138,0.12);'
+                            f'color:var(--accent3);border:1px solid rgba(255,107,138,0.25);">'
+                            f'{op}</span>'
+                        )
+                    nas_chart_html += '</div></div>'
+            nas_chart_html += '</div>'
             nas_labels = [e.get('epoch', i) for i, e in enumerate(parser.nas_epochs)]
             nas_train = [e.get('train_acc', 0) for e in parser.nas_epochs]
             nas_test = [e.get('test_acc', 0) for e in parser.nas_epochs]

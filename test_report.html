@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>mmcli Training Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242837;
+    --border: #2e3348;
+    --text: #e4e6f0;
+    --text-dim: #8b8fa3;
+    --accent: #6c63ff;
+    --accent2: #00d4aa;
+    --accent3: #ff6b8a;
+    --float-color: #6c63ff;
+    --quant-color: #00d4aa;
+    --success: #00d4aa;
+    --danger: #ff6b8a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); padding:24px; min-height:100vh; }
+  .container { max-width:1200px; margin:0 auto; }
+  h1 { font-size:28px; font-weight:700; margin-bottom:4px; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .subtitle { color:var(--text-dim); font-size:14px; margin-bottom:32px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:32px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; }
+  .card .label { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); margin-bottom:8px; }
+  .card .value { font-size:24px; font-weight:600; }
+  .card .value.accent { color:var(--accent); }
+  .card .value.accent2 { color:var(--accent2); }
+  .chart-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .chart-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; color:var(--text); }
+  .chart-container { position:relative; height:320px; }
+  .conf-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .conf-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; }
+  .conf-phase { margin-bottom:24px; }
+  .conf-phase h3 { font-size:15px; font-weight:500; margin-bottom:12px; color:var(--text-dim); }
+  table.conf { border-collapse:collapse; width:auto; font-size:13px; }
+  table.conf th, table.conf td { padding:10px 14px; text-align:center; border:1px solid var(--border); }
+  table.conf th { background:var(--surface2); font-weight:500; color:var(--text-dim); }
+  table.conf td.label-cell { text-align:left; font-weight:500; background:var(--surface2); color:var(--text-dim); white-space:nowrap; }
+  .flcs-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .flcs-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; }
+  table.flcs { border-collapse:collapse; width:100%; font-size:13px; }
+  table.flcs th { background:var(--surface2); font-weight:500; color:var(--text-dim); padding:10px 12px; text-align:left; border:1px solid var(--border); white-space:nowrap; }
+  table.flcs td { padding:8px 12px; border:1px solid var(--border); }
+  table.flcs tr:hover { background:var(--surface2); }
+  table.flcs a { color:var(--accent); text-decoration:none; }
+  table.flcs a:hover { text-decoration:underline; }
+  table.flcs .correct { color:var(--success); font-weight:500; }
+  table.flcs .incorrect { color:var(--danger); font-weight:500; }
+  .status { display:inline-block; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:500; }
+  .status.training { background:rgba(108,99,255,0.15); color:var(--accent); }
+  .status.complete { background:rgba(0,212,170,0.15); color:var(--accent2); }
+  .footer { text-align:center; color:var(--text-dim); font-size:12px; margin-top:40px; padding-top:20px; border-top:1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <h1>mmcli Training Report</h1>
+    <span class="status complete">Complete</span>
+  </div>
+  <div class="subtitle">2 float epochs</div>
+
+  <div class="cards">
+    <div class="card"><div class="label">Float Best Acc</div><div class="value accent">85.0%</div></div>
+<div class="card"><div class="label">Float Epochs</div><div class="value">2</div></div>
+<div class="card"><div class="label">Float Latest Loss</div><div class="value">0.8765</div></div>
+<div class="card"><div class="label">Best Float Epoch</div><div class="value accent">1</div></div>
+<div class="card"><div class="label">Float F1-Score</div><div class="value">0.840</div></div>
+<div class="card"><div class="label">Float AUC ROC</div><div class="value">0.910</div></div>
+
+  </div>
+
+  <div class="chart-section">
+    <h2>Training Metrics</h2>
+    <div class="chart-container"><canvas id="metricsChart"></canvas></div>
+  </div>
+
+  <div class="conf-section"><h2>Confusion Matrix</h2>
+<div class="conf-phase"><h3>Float Training — Best Epoch</h3>
+<table class="conf"><thead><tr><th></th><th>A</th><th>B</th><th>C</th></tr></thead><tbody>
+<tr><td class="label-cell">A</td><td style="background:rgba(0,212,170,0.6353658536585366);color:#fff">40</td><td style="background:rgba(255,107,138,0.04390243902439024);color:var(--text-dim)">3</td><td style="background:rgba(255,107,138,0.029268292682926828);color:var(--text-dim)">2</td></tr>
+<tr><td class="label-cell">B</td><td style="background:rgba(255,107,138,0.029268292682926828);color:var(--text-dim)">2</td><td style="background:rgba(0,212,170,0.576829268292683);color:#fff">36</td><td style="background:rgba(255,107,138,0.029268292682926828);color:var(--text-dim)">2</td></tr>
+<tr><td class="label-cell">C</td><td style="background:rgba(255,107,138,0.014634146341463414);color:var(--text-dim)">1</td><td style="background:rgba(255,107,138,0.029268292682926828);color:var(--text-dim)">2</td><td style="background:rgba(0,212,170,0.65);color:#fff">41</td></tr>
+</tbody></table></div>
+</div>
+
+  <div class="flcs-section"><h2>File-Level Classification Summary</h2>
+<div style="overflow-x:auto;">
+<table class="flcs"><thead><tr><th>True Class</th><th>File</th><th>Total Samples</th><th>Predicted as A</th><th>Predicted as B</th><th>Predicted as C</th></tr></thead><tbody>
+<tr><td>A</td><td>sensor_a1.csv</td><td>25</td><td class="correct">23</td><td class="incorrect">2</td><td>0</td></tr>
+<tr><td>A</td><td>sensor_a2.csv</td><td>30</td><td class="correct">28</td><td class="incorrect">1</td><td class="incorrect">1</td></tr>
+<tr><td>B</td><td>sensor_b1.csv</td><td>20</td><td class="incorrect">2</td><td class="correct">17</td><td class="incorrect">1</td></tr>
+<tr><td>B</td><td>sensor_b2.csv</td><td>22</td><td>0</td><td class="correct">20</td><td class="incorrect">2</td></tr>
+<tr><td>C</td><td>sensor_c1.csv</td><td>18</td><td class="incorrect">1</td><td class="incorrect">1</td><td class="correct">16</td></tr>
+<tr><td>C</td><td>sensor_c2.csv</td><td>28</td><td>0</td><td class="incorrect">3</td><td class="correct">25</td></tr>
+</tbody></table></div></div>
+
+
+  <div class="footer">Generated by mmcli · Musical Platypus Vibes © 2026</div>
+</div>
+
+<script>
+const chartOpts = {
+  responsive:true, maintainAspectRatio:false,
+  plugins:{ legend:{ labels:{ color:'#8b8fa3',font:{family:'Inter'} } } },
+  scales:{
+    x:{ title:{display:true,text:'Epoch',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },
+    y:{ grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} }
+  }
+};
+
+// Combined metrics chart (dual Y-axes)
+new Chart(document.getElementById('metricsChart'), {
+  type:'line',
+  data:{
+    labels:[0, 1],
+    datasets:[
+      {label:'Float Val Accuracy',data:[55.0, 85.0],borderColor:'#6c63ff',backgroundColor:'#6c63ff22',tension:0.3,pointRadius:2,borderWidth:2,yAxisID:'y',fill:false},
+      {label:'Float Train Accuracy',data:[45.0, 82.0],borderColor:'#6c63ff',backgroundColor:'#6c63ff22',tension:0.3,pointRadius:2,borderWidth:2,borderDash:[5,5],yAxisID:'y',fill:false},
+      {label:'Float Loss',data:[2.1234, 0.8765],borderColor:'#ff6b8a',backgroundColor:'#ff6b8a22',tension:0.3,pointRadius:2,borderWidth:2,yAxisID:'y1',fill:false}
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    interaction:{ mode:'index', intersect:false },
+    plugins:{ legend:{ labels:{ color:'#8b8fa3',font:{family:'Inter'} } } },
+    scales:{
+      x:{ title:{display:true,text:'Epoch',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },
+      y:{ type:'linear', position:'left', title:{display:true,text:'Accuracy (%)',color:'#8b8fa3',font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },
+      y1:{ type:'linear', position:'right', title:{display:true,text:'Loss',color:'#8b8fa3',font:{family:'Inter'}}, grid:{drawOnChartArea:false}, ticks:{color:'#8b8fa3'} }
+    }
+  }
+});
+</script>
+</body>
+</html>

@@ -6,6 +6,9 @@ Command-line interface for [tinyml-modelmaker](https://github.com/musicalplatypu
 training and compilation pipeline entirely from the command line — no YAML config file
 required (though one can optionally be used as a base).
 
+It ships with **9 bundled example datasets** covering all task types, so you can
+create a project and start training with a single command.
+
 ## How it works
 
 `mmcli` is a lightweight binary (~10 MB) that does **not** bundle
@@ -35,7 +38,7 @@ python3.10 -m venv ~/.venv-tinyml
 source ~/.venv-tinyml/bin/activate
 
 # Install tinyml_modelmaker from the release tag
-pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.7.0_Release#subdirectory=tinyml-modelmaker"
+pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.8.0_Release#subdirectory=tinyml-modelmaker"
 ```
 
 ### 2. Set the environment variable
@@ -55,7 +58,7 @@ cp dist/mmcli /usr/local/bin/mmcli   # or anywhere on your PATH
 
 **Option B — Build it yourself** (requires any Python + PyInstaller in an active venv):
 ```bash
-git clone --branch PlatypusCLI_0.7.0_Release https://github.com/musicalplatypus/tinyml-cli.git
+git clone --branch PlatypusCLI_0.8.0_Release https://github.com/musicalplatypus/tinyml-cli.git
 cd tinyml-cli
 source ~/.venv-ai/bin/activate        # any venv with PyInstaller
 pip install pyinstaller -q
@@ -66,6 +69,35 @@ bash build_macos.sh                   # → dist/mmcli  (~10 MB)
 ---
 
 ## Subcommands
+
+### `mmcli init` — create a project from an example dataset
+
+Create a new project directory pre-populated with a dataset, ready for training.
+
+```
+mmcli init -t TASK --dataset DATASET_NAME -p PROJECT_DIR [-m MODULE]
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--task` | `-t` | Task type **(required)** |
+| `--dataset` | | Name of the example dataset **(required)** |
+| `--project` | `-p` | Path for the new project directory **(required, must not exist)** |
+| `--module` | `-m` | AI module (auto-detected from dataset if omitted) |
+
+**Example:**
+```bash
+# Create a project for arc fault classification
+mmcli init -t arc_fault --dataset arc_fault_classification -p ./my_arc_project
+
+# Then train with it
+mmcli train -m timeseries -t arc_fault -d F28P55 -n CLS_1k_NPU -i ./my_arc_project
+```
+
+> **Tip:** Run `mmcli info -m timeseries -t <task>` to see which datasets are available
+> for a given task.
+
+---
 
 ### `mmcli train` — train only
 
@@ -155,11 +187,35 @@ mmcli run \
 
 ---
 
+## Example Datasets
+
+`mmcli` bundles 9 example datasets downloaded from TI's servers. Use `mmcli init`
+to extract them into a new project.
+
+| Dataset Name | Task Type | Size | Description |
+|-------------|-----------|------|-------------|
+| `generic_timeseries_classification` | classification | 2.5 MB | Synthetic waveforms (sawtooth, sine, square) |
+| `generic_timeseries_regression` | regression | 885 KB | Synthetic regression data |
+| `generic_timeseries_anomalydetection` | anomaly detection | 4.0 MB | Amplitude/frequency anomalies |
+| `generic_timeseries_forecasting` | forecasting | 69 KB | Simulated thermostat temperatures |
+| `arc_fault_classification` | arc_fault | 13 MB | DC arc fault currents (DSI sensor) |
+| `ecg_classification` | ecg_classification | 4.4 MB | ECG 2-class heartbeat (normal vs abnormal) |
+| `fan_blade_fault` | motor_fault | 54 MB | Fan blade vibration (3-axis accelerometer) |
+| `pir_detection` | pir_detection | 1.5 MB | PIR motion detection (human vs non-human) |
+| `mnist_image_classification` | image_classification | 45 MB | MNIST handwritten digits (28×28 images) |
+
+To use an external datasets directory instead of the bundled one, set:
+```bash
+export MMCLI_DATASETS=/path/to/your/datasets
+```
+
+
 ## Useful options
 
 ### `mmcli info` — query the model registry
 
-Show supported task types, models, devices, and feature extraction presets.
+Show supported task types, models, devices, feature extraction presets,
+and available example datasets.
 
 ```
 mmcli info -m MODULE [-t TASK] [-d DEVICE]
@@ -371,3 +427,4 @@ that has `tinyml_modelmaker`.
 |----------|---------|-------------|
 | `MMCLI_PYTHON` | `python` or `python3` on PATH | Python interpreter with `tinyml_modelmaker` installed |
 | `MMCLI_MODELMAKER` | auto-detected | Path to tinyml-modelmaker source dir (only needed if auto-detection fails) |
+| `MMCLI_DATASETS` | bundled `example_datasets/` | Override directory containing example dataset zips |

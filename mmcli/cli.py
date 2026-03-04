@@ -2,6 +2,7 @@
 mmcli — command-line interface for tinyml-modelmaker.
 
 Subcommands:
+  init     Create a new project from an example dataset
   train    Train a model and export ONNX (no compilation)
   compile  Compile an existing ONNX file (no training)
   run      Full pipeline: train then compile
@@ -592,6 +593,55 @@ def _add_info_parser(subparsers) -> None:
     )
 
 
+def _add_init_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "init",
+        help="Create a new project from an example dataset.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Initialise a new project directory from a bundled example\n"
+            "dataset.  The dataset zip is extracted into the project so\n"
+            "it is ready for 'mmcli train'.\n\n"
+            "Example:\n"
+            "  mmcli init -t arc_fault --dataset arc_fault_sample \\\n"
+            "             -p ./my_arc_project\n\n"
+            "List available datasets with 'mmcli info'.\n"
+            "Set MMCLI_DATASETS to override the built-in datasets directory."
+        ),
+    )
+    p.add_argument(
+        "-t", "--task",
+        required=True,
+        metavar="TASK_TYPE",
+        help=(
+            "Task type for the new project.\n"
+            "Use 'mmcli info -m <module>' to see available tasks."
+        ),
+    )
+    p.add_argument(
+        "-p", "--project",
+        required=True,
+        metavar="PROJECT_DIR",
+        help="Path for the new project directory (must not already exist).",
+    )
+    p.add_argument(
+        "--dataset",
+        required=True,
+        metavar="DATASET_NAME",
+        help=(
+            "Name of the example dataset to use.\n"
+            "Use 'mmcli info -m <module> -t <task>' to see available datasets."
+        ),
+    )
+    p.add_argument(
+        "-m", "--module",
+        default=None,
+        choices=MODULES,
+        metavar="MODULE",
+        help="AI module (auto-detected from dataset if omitted).",
+    )
+
+
 def _add_about_parser(subparsers) -> None:
     subparsers.add_parser(
         "about",
@@ -816,6 +866,7 @@ def main() -> None:
         description=(
             "mmcli — command-line interface for tinyml-modelmaker\n\n"
             "Subcommands:\n"
+            "  init     Create a new project from an example dataset\n"
             "  train    Train a model and export ONNX (uses Metal/MPS on macOS)\n"
             "  compile  Compile an existing ONNX file (Linux/Windows only)\n"
             "  run      Full pipeline: train then compile\n"
@@ -850,6 +901,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", metavar="SUBCOMMAND")
     subparsers.required = True
 
+    _add_init_parser(subparsers)
     _add_train_parser(subparsers)
     _add_compile_parser(subparsers)
     _add_run_parser(subparsers)
@@ -870,6 +922,15 @@ def main() -> None:
     if args.command == "about":
         from mmcli.about import run_about
         run_about()
+        sys.exit(0)
+
+    if args.command == "init":
+        from mmcli.datasets import extract_dataset
+        extract_dataset(
+            dataset_name=args.dataset,
+            project_path=args.project,
+            task_type=args.task,
+        )
         sys.exit(0)
 
     if args.command == "info":
