@@ -128,6 +128,34 @@ _RE_DATASET_PATH = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# NAS search-specific patterns
+# ---------------------------------------------------------------------------
+
+# NAS per-epoch summary: "Train:  Acc@1 68.123456" (from nas.search logger)
+_RE_NAS_TRAIN_ACC = re.compile(r'Train:\s+Acc@1\s+([\d.]+)')
+
+# NAS per-epoch summary: "Test:  Acc@1 62.345678" (from nas.search logger)
+_RE_NAS_TEST_ACC = re.compile(r'Test:\s+Acc@1\s+([\d.]+)')
+
+# NAS best genotype: "New best genotype at epoch 3 (Acc@1 65.432100)"
+_RE_NAS_BEST_GENOTYPE = re.compile(
+    r'New best genotype at epoch\s+(\d+)\s+\(Acc@1\s+([\d.]+)\)'
+)
+
+# NAS per-step progress (from nas.train or nas.infer):
+# "Epoch: [0]  [000/128]  eta: 00:12:34  lr: 0.025  samples/s: 45.2  loss: 1.23  acc1: 33.33  ..."
+_RE_NAS_STEP = re.compile(
+    r'Epoch:\s*\[(\d+)\]\s+\[(\d+)/(\d+)\]\s+eta:\s*(\S+).*?loss:\s*([\d.]+).*?acc1:\s*([\d.]+)'
+)
+
+# NAS device info: "NAS device: mps (Apple Metal)"
+_RE_NAS_DEVICE = re.compile(r'NAS device:\s*(\S+)')
+
+# NAS param size: "param size = 0.013075MB"
+_RE_NAS_PARAM_SIZE = re.compile(r'param size\s*=\s*([\d.]+)MB')
+
+
 class TrainingLogParser:
     """Parse tinyml_modelmaker training log lines incrementally."""
 
@@ -148,6 +176,14 @@ class TrainingLogParser:
         self.dataset_path = None   # dataset directory for hyperlinks
         self.task_type = None      # 'classification', 'regression', 'forecasting' (auto-detected)
         self.test_data_metrics = []  # forecasting: [{var, smape, r2}] from test_data lines
+        # NAS search state
+        self.nas_epochs = []         # list of {epoch, train_acc, test_acc}
+        self.nas_best = {}           # {epoch, acc}
+        self.is_nas = False          # auto-detected from NAS log lines
+        self.nas_device = None       # 'mps', 'cuda', 'cpu'
+        self.nas_param_size = None   # search model size in MB
+        self._nas_pending = {}       # accumulate NAS epoch data
+        self._nas_last_step = {}     # last per-step data for progress display
 
     def feed_line(self, line: str) -> bool:
         """
@@ -173,6 +209,11 @@ class TrainingLogParser:
             # Line without standard log prefix (e.g. continuation of confusion matrix)
             logger_name = ''
             message = line
+
+        # ---- NAS search lines (from root.modelopt.nas.* loggers) ----
+        if 'modelopt.nas' in logger_name:
+            self.is_nas = True
+            return self._parse_nas_line(logger_name, message)
 
         is_best = 'BestEpoch' in logger_name
 
@@ -425,6 +466,71 @@ class TrainingLogParser:
 
         return False
 
+    # ------------------------------------------------------------------
+    # NAS search parsing
+    # ------------------------------------------------------------------
+
+    def _parse_nas_line(self, logger_name: str, message: str) -> bool:
+        """Parse a line from root.modelopt.nas.* loggers. Returns True if new data."""
+
+        # NAS device info
+        dm = _RE_NAS_DEVICE.search(message)
+        if dm:
+            self.nas_device = dm.group(1)
+            return False
+
+        # NAS param size
+        pm = _RE_NAS_PARAM_SIZE.search(message)
+        if pm:
+            self.nas_param_size = float(pm.group(1))
+            return False
+
+        # Per-step progress (for live ETA display)
+        sm = _RE_NAS_STEP.search(message)
+        if sm:
+            self._nas_last_step = {
+                'epoch': int(sm.group(1)),
+                'step': int(sm.group(2)),
+                'total_steps': int(sm.group(3)),
+                'eta': sm.group(4),
+                'loss': float(sm.group(5)),
+                'acc': float(sm.group(6)),
+            }
+            return False
+
+        # Per-epoch train accuracy
+        ta = _RE_NAS_TRAIN_ACC.search(message)
+        if ta:
+            self._nas_pending['train_acc'] = float(ta.group(1))
+            return False
+
+        # Per-epoch test accuracy (triggers flush)
+        te = _RE_NAS_TEST_ACC.search(message)
+        if te:
+            self._nas_pending['test_acc'] = float(te.group(1))
+            self._flush_nas_epoch()
+            return True
+
+        # Best genotype
+        bg = _RE_NAS_BEST_GENOTYPE.search(message)
+        if bg:
+            self.nas_best = {
+                'epoch': int(bg.group(1)),
+                'acc': float(bg.group(2)),
+            }
+            return True
+
+        return False
+
+    def _flush_nas_epoch(self):
+        """Append accumulated NAS epoch data to nas_epochs."""
+        if not self._nas_pending:
+            return
+        entry = dict(self._nas_pending)
+        entry.setdefault('epoch', len(self.nas_epochs))
+        self.nas_epochs.append(entry)
+        self._nas_pending = {}
+
 
 # ---------------------------------------------------------------------------
 # HTML report generator
@@ -466,6 +572,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .card .value {{ font-size:24px; font-weight:600; }}
   .card .value.accent {{ color:var(--accent); }}
   .card .value.accent2 {{ color:var(--accent2); }}
+  .card .value.accent3 {{ color:var(--accent3); }}
   .chart-section {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }}
   .chart-section h2 {{ font-size:18px; font-weight:600; margin-bottom:16px; color:var(--text); }}
   .chart-container {{ position:relative; height:320px; }}
@@ -511,6 +618,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     {summary_cards}
   </div>
 
+  {nas_chart_html}
+
   <div class="chart-section">
     <h2>Training Metrics</h2>
     <div class="chart-container"><canvas id="metricsChart"></canvas></div>
@@ -555,6 +664,8 @@ new Chart(document.getElementById('metricsChart'), {{
     }}
   }}
 }});
+
+{nas_chart_js}
 </script>
 </body>
 </html>"""
@@ -836,6 +947,8 @@ class HTMLReportGenerator:
         # Subtitle
         total = len(float_epochs) + len(quant_epochs)
         parts = []
+        if parser.nas_epochs:
+            parts.append(f'{len(parser.nas_epochs)} NAS search epochs')
         if float_epochs:
             parts.append(f'{len(float_epochs)} float epochs')
         if quant_epochs:
@@ -847,6 +960,17 @@ class HTMLReportGenerator:
 
         # Summary cards (adaptive by task type)
         cards = []
+
+        # NAS search cards (always first if NAS was used)
+        if parser.is_nas:
+            cards.append(('NAS Search', f'{len(parser.nas_epochs)} epochs', 'accent3'))
+            if parser.nas_best.get('acc') is not None:
+                cards.append(('NAS Best Acc', f"{parser.nas_best['acc']:.1f}%", 'accent3'))
+            if parser.nas_device:
+                cards.append(('NAS Device', parser.nas_device.upper(), ''))
+            if parser.nas_param_size is not None:
+                cards.append(('Search Model', f'{parser.nas_param_size:.3f} MB', ''))
+
         if task == 'classification':
             if float_epochs:
                 best_acc = max(e.get('val_acc', 0) for e in float_epochs)
@@ -1008,6 +1132,41 @@ class HTMLReportGenerator:
             report_dir = os.path.dirname(os.path.abspath(self.output_path))
             pca_html = _pca_images_to_html(report_dir)
 
+        # NAS search chart
+        nas_chart_html = ''
+        nas_chart_js = ''
+        if parser.nas_epochs:
+            nas_chart_html = (
+                '<div class="chart-section">'
+                '<h2>NAS Architecture Search</h2>'
+                '<div class="chart-container"><canvas id="nasChart"></canvas></div>'
+                '</div>'
+            )
+            nas_labels = [e.get('epoch', i) for i, e in enumerate(parser.nas_epochs)]
+            nas_train = [e.get('train_acc', 0) for e in parser.nas_epochs]
+            nas_test = [e.get('test_acc', 0) for e in parser.nas_epochs]
+            nas_ds = []
+            nas_ds.append(_make_dataset_js('Train Accuracy', nas_train, '#ffa726', yaxis='y'))
+            nas_ds.append(_make_dataset_js('Test Accuracy', nas_test, '#ff6b8a', yaxis='y'))
+            nas_chart_js = (
+                "new Chart(document.getElementById('nasChart'), {{"
+                "  type:'line',"
+                "  data:{{ labels:{labels}, datasets:[{datasets}] }},"
+                "  options:{{"
+                "    responsive:true, maintainAspectRatio:false,"
+                "    interaction:{{ mode:'index', intersect:false }},"
+                "    plugins:{{ legend:{{ labels:{{ color:'#8b8fa3',font:{{family:'Inter'}} }} }} }},"
+                "    scales:{{"
+                "      x:{{ title:{{display:true,text:'Search Epoch',color:'#8b8fa3',font:{{family:'Inter'}}}}, grid:{{color:'#2e3348'}}, ticks:{{color:'#8b8fa3'}} }},"
+                "      y:{{ type:'linear', position:'left', title:{{display:true,text:'Accuracy (%)',color:'#8b8fa3',font:{{family:'Inter'}}}}, grid:{{color:'#2e3348'}}, ticks:{{color:'#8b8fa3'}} }}"
+                "    }}"
+                "  }}"
+                "}});"
+            ).format(
+                labels=nas_labels,
+                datasets=','.join(nas_ds),
+            )
+
         # Render
         html = _HTML_TEMPLATE.format(
             auto_refresh=auto_refresh,
@@ -1021,6 +1180,8 @@ class HTMLReportGenerator:
             flcs_html=flcs_html,
             pca_html=pca_html,
             y_axis_label=y_axis_label,
+            nas_chart_html=nas_chart_html,
+            nas_chart_js=nas_chart_js,
         )
 
         os.makedirs(os.path.dirname(self.output_path) or '.', exist_ok=True)

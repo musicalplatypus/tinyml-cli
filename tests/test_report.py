@@ -476,3 +476,131 @@ class TestForecastingParser:
         assert '0.9967' in html
         assert '0.95' in html
         assert '0.9833' in html
+
+
+# ---------------------------------------------------------------------------
+# NAS search report tests
+# ---------------------------------------------------------------------------
+
+# NAS log line samples
+NAS_DEVICE = "   INFO: root.modelopt.nas   : NAS device: mps (Apple Metal)"
+NAS_PARAM = "   INFO: root.modelopt.nas.search: param size = 0.013075MB"
+NAS_STEP_0 = (
+    "   INFO: root.modelopt.nas.train: "
+    "Epoch: [0]  [000/128]  eta: 00:12:34  lr: 0.025000  samples/s: 45.200  loss: 1.23  acc1: 33.33  time: 0.1234  max_mem: 0.0"
+)
+NAS_TRAIN_ACC_0 = "   INFO: root.modelopt.nas.search: Train:  Acc@1 52.345678"
+NAS_TEST_ACC_0 = "   INFO: root.modelopt.nas.search: Test:  Acc@1 48.123456"
+NAS_TRAIN_ACC_1 = "   INFO: root.modelopt.nas.search: Train:  Acc@1 64.567890"
+NAS_TEST_ACC_1 = "   INFO: root.modelopt.nas.search: Test:  Acc@1 58.234567"
+NAS_BEST = "   INFO: root.modelopt.nas.search: New best genotype at epoch 1 (Acc@1 58.234567)"
+
+
+class TestNASParser:
+    """Tests for NAS architecture search parsing."""
+
+    def test_nas_device_detection(self):
+        p = TrainingLogParser()
+        p.feed_line(NAS_DEVICE)
+        assert p.is_nas is True
+        assert p.nas_device == 'mps'
+
+    def test_nas_param_size(self):
+        p = TrainingLogParser()
+        p.feed_line(NAS_PARAM)
+        assert p.nas_param_size == pytest.approx(0.013075)
+
+    def test_nas_search_epochs(self):
+        p = TrainingLogParser()
+        p.feed_line(NAS_TRAIN_ACC_0)
+        p.feed_line(NAS_TEST_ACC_0)
+        p.feed_line(NAS_TRAIN_ACC_1)
+        p.feed_line(NAS_TEST_ACC_1)
+        assert len(p.nas_epochs) == 2
+        assert p.nas_epochs[0]['train_acc'] == pytest.approx(52.345678)
+        assert p.nas_epochs[0]['test_acc'] == pytest.approx(48.123456)
+        assert p.nas_epochs[1]['train_acc'] == pytest.approx(64.567890)
+        assert p.nas_epochs[1]['test_acc'] == pytest.approx(58.234567)
+
+    def test_nas_best_genotype(self):
+        p = TrainingLogParser()
+        p.feed_line(NAS_BEST)
+        assert p.nas_best['epoch'] == 1
+        assert p.nas_best['acc'] == pytest.approx(58.234567)
+
+    def test_nas_step_parsing(self):
+        p = TrainingLogParser()
+        p.feed_line(NAS_STEP_0)
+        assert p._nas_last_step['epoch'] == 0
+        assert p._nas_last_step['step'] == 0
+        assert p._nas_last_step['total_steps'] == 128
+        assert p._nas_last_step['loss'] == pytest.approx(1.23)
+        assert p._nas_last_step['acc'] == pytest.approx(33.33)
+
+    def test_nas_no_interference_with_training(self):
+        """NAS lines should not affect float_epochs or task_type."""
+        p = TrainingLogParser()
+        for line in [NAS_DEVICE, NAS_PARAM, NAS_TRAIN_ACC_0, NAS_TEST_ACC_0]:
+            p.feed_line(line)
+        assert p.float_epochs == []
+        assert p.task_type is None
+        # Now feed normal training
+        p.feed_line(FLOAT_EPOCH_0)
+        p.feed_line(FLOAT_TEST_ACC_0)
+        p.feed_line(FLOAT_TEST_F1_0)
+        p.feed_line(FLOAT_TEST_AUC_0)
+        assert len(p.float_epochs) == 1
+        assert p.task_type == 'classification'
+
+    def test_nas_report_html_contains_search_chart(self):
+        p = TrainingLogParser()
+        for line in [NAS_DEVICE, NAS_PARAM, NAS_TRAIN_ACC_0, NAS_TEST_ACC_0, NAS_BEST]:
+            p.feed_line(line)
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as f:
+            path = f.name
+        try:
+            gen = HTMLReportGenerator(path)
+            gen.generate(p, is_complete=False)
+            html = open(path).read()
+            assert 'nasChart' in html
+            assert 'NAS Architecture Search' in html
+            assert 'NAS Search' in html
+            assert 'MPS' in html
+        finally:
+            os.unlink(path)
+
+    def test_nas_report_html_has_both_charts(self):
+        """When NAS + training data present, both charts appear."""
+        p = TrainingLogParser()
+        for line in [NAS_DEVICE, NAS_TRAIN_ACC_0, NAS_TEST_ACC_0]:
+            p.feed_line(line)
+        # Normal training
+        p.feed_line(FLOAT_EPOCH_0)
+        p.feed_line(FLOAT_TEST_ACC_0)
+        p.feed_line(FLOAT_TEST_F1_0)
+        p.feed_line(FLOAT_TEST_AUC_0)
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as f:
+            path = f.name
+        try:
+            gen = HTMLReportGenerator(path)
+            gen.generate(p)
+            html = open(path).read()
+            assert 'nasChart' in html
+            assert 'metricsChart' in html
+            assert 'NAS search epochs' in html
+        finally:
+            os.unlink(path)
+
+    def test_nas_subtitle_includes_search_count(self):
+        p = TrainingLogParser()
+        for line in [NAS_TRAIN_ACC_0, NAS_TEST_ACC_0, NAS_TRAIN_ACC_1, NAS_TEST_ACC_1]:
+            p.feed_line(line)
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as f:
+            path = f.name
+        try:
+            gen = HTMLReportGenerator(path)
+            gen.generate(p)
+            html = open(path).read()
+            assert '2 NAS search epochs' in html
+        finally:
+            os.unlink(path)
