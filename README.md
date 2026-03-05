@@ -1,10 +1,13 @@
 # mmcli
 
+[![Tests](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/test-cli.yml/badge.svg)](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/test-cli.yml)
+[![Release](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/release.yml/badge.svg)](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/release.yml)
+
 Command-line interface for [tinyml-modelmaker](https://github.com/musicalplatypus/tinyml-tensorlab).
 
-`mmcli` is a **self-contained native macOS binary** that drives the tinyml-modelmaker
-training and compilation pipeline entirely from the command line — no YAML config file
-required (though one can optionally be used as a base).
+`mmcli` is a **self-contained native binary** (macOS, Linux, Windows) that drives the
+tinyml-modelmaker training and compilation pipeline entirely from the command line —
+no YAML config file required (though one can optionally be used as a base).
 
 It ships with **9 bundled example datasets** covering all task types, so you can
 create a project and start training with a single command.
@@ -38,7 +41,7 @@ python3.10 -m venv ~/.venv-tinyml
 source ~/.venv-tinyml/bin/activate
 
 # Install tinyml_modelmaker from the release tag
-pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.9.0_Release#subdirectory=tinyml-modelmaker"
+pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.9.1_Release#subdirectory=tinyml-modelmaker"
 ```
 
 ### 2. Set the environment variable
@@ -56,14 +59,21 @@ export MMCLI_PYTHON="$HOME/.venv-tinyml/bin/python"
 cp dist/mmcli /usr/local/bin/mmcli   # or anywhere on your PATH
 ```
 
-**Option B — Build it yourself** (requires any Python + PyInstaller in an active venv):
+**Option B — Download from GitHub Releases:**
+
+Pre-built binaries for macOS (arm64), Linux (x86_64), and Windows (x86_64)
+are published automatically on the [Releases page](https://github.com/musicalplatypus/tinyml-cli/releases).
+
+**Option C — Build it yourself** (requires any Python + PyInstaller in an active venv):
 ```bash
-git clone --branch PlatypusCLI_0.9.0_Release https://github.com/musicalplatypus/tinyml-cli.git
+git clone --branch PlatypusCLI_0.9.1_Release https://github.com/musicalplatypus/tinyml-cli.git
 cd tinyml-cli
 source ~/.venv-ai/bin/activate        # any venv with PyInstaller
 pip install pyinstaller -q
 pip install -e .
-bash build_macos.sh                   # → dist/mmcli  (~10 MB)
+bash build_macos.sh                   # macOS  → dist/mmcli
+bash build_linux.sh                   # Linux  → dist/mmcli
+powershell build_windows.ps1          # Windows → dist/mmcli.exe
 ```
 
 ---
@@ -76,17 +86,25 @@ Create a new project directory pre-populated with a dataset, ready for training.
 
 ```
 mmcli init -t TASK --dataset DATASET_NAME -p PROJECT_DIR [-m MODULE]
+mmcli init --list [-t TASK] [-m MODULE]
 ```
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--task` | `-t` | Task type **(required)** |
-| `--dataset` | | Name of the example dataset **(required)** |
-| `--project` | `-p` | Path for the new project directory **(required, must not exist)** |
+| `--list` | `-l` | List available datasets (no extraction) |
+| `--task` | `-t` | Task type (required for extraction) |
+| `--dataset` | | Name of the example dataset (required for extraction) |
+| `--project` | `-p` | Path for the new project directory (required for extraction) |
 | `--module` | `-m` | AI module (auto-detected from dataset if omitted) |
 
-**Example:**
+**Examples:**
 ```bash
+# List all available datasets
+mmcli init --list
+
+# List datasets for a specific module
+mmcli init --list -m vision
+
 # Create a project for arc fault classification
 mmcli init -t arc_fault --dataset arc_fault_classification -p ./my_arc_project
 
@@ -94,8 +112,8 @@ mmcli init -t arc_fault --dataset arc_fault_classification -p ./my_arc_project
 mmcli train -m timeseries -t arc_fault -d F28P55 -n CLS_1k_NPU -i ./my_arc_project
 ```
 
-> **Tip:** Run `mmcli info -m timeseries -t <task>` to see which datasets are available
-> for a given task.
+> **Tip:** Run `mmcli init --list` to see all available datasets, or
+> `mmcli info -m timeseries -t <task>` for task-specific details.
 
 ---
 
@@ -377,8 +395,12 @@ mmcli --dry-run train \
 
 ## Available target devices
 
-`F280013` `F280015` `F28003` `F28004` `F2837` `F28P55` `F28P65` `F29H85`
-`MSPM0G3507` `MSPM0G5187` `CC2755` `AM263`
+`F280013` `F280015` `F28003` `F28004` `F2837` `F28P55` `F28P65`
+`F29H85` `F29P58` `F29P32`
+`MSPM0G3507` `MSPM0G3519` `MSPM0G5187`
+`MSPM33C32` `MSPM33C34`
+`AM263` `AM263P` `AM261` `AM13E2`
+`CC2755` `CC1352` `CC1354` `CC35X1`
 
 ## Example model names (timeseries)
 
@@ -409,10 +431,14 @@ mmcli --dry-run train \
 ## Building the binary
 
 ```bash
+# macOS
 bash build_macos.sh              # arm64 (Apple Silicon, default)
 ARCH=x86_64 bash build_macos.sh  # Intel Mac
 ARCH=universal2 bash build_macos.sh  # fat binary (both)
-# Output: dist/mmcli
+
+# Linux / Windows
+bash build_linux.sh              # → dist/mmcli
+powershell build_windows.ps1     # → dist/mmcli.exe
 ```
 
 Copy `dist/mmcli` anywhere on your `PATH`. No Python environment needed to
@@ -428,3 +454,18 @@ that has `tinyml_modelmaker`.
 | `MMCLI_PYTHON` | `python` or `python3` on PATH | Python interpreter with `tinyml_modelmaker` installed |
 | `MMCLI_MODELMAKER` | auto-detected | Path to tinyml-modelmaker source dir (only needed if auto-detection fails) |
 | `MMCLI_DATASETS` | bundled `example_datasets/` | Override directory containing example dataset zips |
+
+---
+
+## CI / CD
+
+Tests run automatically on every push and pull request via GitHub Actions:
+
+- **[test-cli.yml](.github/workflows/test-cli.yml)** — Tiers 1–4 on Linux and Windows
+- **[release.yml](.github/workflows/release.yml)** — Build binaries for macOS, Linux, and Windows on tag push
+
+To create a release:
+```bash
+git tag v0.9.1
+git push origin v0.9.1
+```

@@ -1,8 +1,11 @@
 # mmcli
 
+[![Tests](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/test-cli.yml/badge.svg)](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/test-cli.yml)
+[![Release](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/release.yml/badge.svg)](https://github.com/musicalplatypus/tinyml-cli/actions/workflows/release.yml)
+
 [tinyml-modelmaker](https://github.com/musicalplatypus/tinyml-tensorlab) 的命令行界面工具。
 
-`mmcli` 是一个**独立的 macOS 原生二进制文件**，可完全通过命令行驱动 tinyml-modelmaker
+`mmcli` 是一个**独立的原生二进制文件**（macOS、Linux、Windows），可完全通过命令行驱动 tinyml-modelmaker
 训练和编译流水线——无需 YAML 配置文件（但也可以选择使用 YAML 文件作为基础配置）。
 
 工具内置 **9 个示例数据集**，覆盖所有任务类型，只需一条命令即可创建项目并开始训练。
@@ -36,7 +39,7 @@ python3.10 -m venv ~/.venv-tinyml
 source ~/.venv-tinyml/bin/activate
 
 # 从发布标签安装 tinyml_modelmaker
-pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.9.0_Release#subdirectory=tinyml-modelmaker"
+pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.9.1_Release#subdirectory=tinyml-modelmaker"
 ```
 
 ### 2. 设置环境变量
@@ -54,14 +57,21 @@ export MMCLI_PYTHON="$HOME/.venv-tinyml/bin/python"
 cp dist/mmcli /usr/local/bin/mmcli   # 或 PATH 中的任何位置
 ```
 
-**方案 B — 自行编译**（需要任意 Python + 已激活虚拟环境中的 PyInstaller）：
+**方案 B — 从 GitHub Releases 下载：**
+
+macOS (arm64)、Linux (x86_64) 和 Windows (x86_64) 的预编译二进制文件
+会自动发布到 [Releases 页面](https://github.com/musicalplatypus/tinyml-cli/releases)。
+
+**方案 C — 自行编译**（需要任意 Python + 已激活虚拟环境中的 PyInstaller）：
 ```bash
-git clone --branch PlatypusCLI_0.9.0_Release https://github.com/musicalplatypus/tinyml-cli.git
+git clone --branch PlatypusCLI_0.9.1_Release https://github.com/musicalplatypus/tinyml-cli.git
 cd tinyml-cli
 source ~/.venv-ai/bin/activate        # 任何安装了 PyInstaller 的虚拟环境
 pip install pyinstaller -q
 pip install -e .
-bash build_macos.sh                   # → dist/mmcli（约 10 MB）
+bash build_macos.sh                   # macOS  → dist/mmcli
+bash build_linux.sh                   # Linux  → dist/mmcli
+powershell build_windows.ps1          # Windows → dist/mmcli.exe
 ```
 
 ---
@@ -74,17 +84,25 @@ bash build_macos.sh                   # → dist/mmcli（约 10 MB）
 
 ```
 mmcli init -t TASK --dataset DATASET_NAME -p PROJECT_DIR [-m MODULE]
+mmcli init --list [-t TASK] [-m MODULE]
 ```
 
 | 参数 | 缩写 | 说明 |
 |------|------|------|
-| `--task` | `-t` | 任务类型 **（必填）** |
-| `--dataset` | | 示例数据集名称 **（必填）** |
-| `--project` | `-p` | 新项目目录路径 **（必填，目录不能已存在）** |
+| `--list` | `-l` | 列出可用数据集（不提取） |
+| `--task` | `-t` | 任务类型（提取时必填） |
+| `--dataset` | | 示例数据集名称（提取时必填） |
+| `--project` | `-p` | 新项目目录路径（提取时必填） |
 | `--module` | `-m` | AI 模块（如省略则从数据集自动检测） |
 
 **示例：**
 ```bash
+# 列出所有可用数据集
+mmcli init --list
+
+# 列出特定模块的数据集
+mmcli init --list -m vision
+
 # 创建一个电弧故障分类项目
 mmcli init -t arc_fault --dataset arc_fault_classification -p ./my_arc_project
 
@@ -92,7 +110,8 @@ mmcli init -t arc_fault --dataset arc_fault_classification -p ./my_arc_project
 mmcli train -m timeseries -t arc_fault -d F28P55 -n CLS_1k_NPU -i ./my_arc_project
 ```
 
-> **提示：** 运行 `mmcli info -m timeseries -t <task>` 可查看指定任务可用的数据集。
+> **提示：** 运行 `mmcli init --list` 查看所有可用数据集，或
+> `mmcli info -m timeseries -t <task>` 查看特定任务的详情。
 
 ---
 
@@ -365,8 +384,12 @@ mmcli --dry-run train \
 
 ## 可用目标设备
 
-`F280013` `F280015` `F28003` `F28004` `F2837` `F28P55` `F28P65` `F29H85`
-`MSPM0G3507` `MSPM0G5187` `CC2755` `AM263`
+`F280013` `F280015` `F28003` `F28004` `F2837` `F28P55` `F28P65`
+`F29H85` `F29P58` `F29P32`
+`MSPM0G3507` `MSPM0G3519` `MSPM0G5187`
+`MSPM33C32` `MSPM33C34`
+`AM263` `AM263P` `AM261` `AM13E2`
+`CC2755` `CC1352` `CC1354` `CC35X1`
 
 ## 示例模型名称（时序）
 
@@ -397,10 +420,14 @@ mmcli --dry-run train \
 ## 编译二进制文件
 
 ```bash
+# macOS
 bash build_macos.sh              # arm64（Apple Silicon，默认）
 ARCH=x86_64 bash build_macos.sh  # Intel Mac
 ARCH=universal2 bash build_macos.sh  # 通用二进制（两者皆可）
-# 输出：dist/mmcli
+
+# Linux / Windows
+bash build_linux.sh              # → dist/mmcli
+powershell build_windows.ps1     # → dist/mmcli.exe
 ```
 
 将 `dist/mmcli` 复制到 `PATH` 中的任何位置。**运行**二进制文件不需要 Python 环境
@@ -415,3 +442,18 @@ ARCH=universal2 bash build_macos.sh  # 通用二进制（两者皆可）
 | `MMCLI_PYTHON` | PATH 中的 `python` 或 `python3` | 安装了 `tinyml_modelmaker` 的 Python 解释器 |
 | `MMCLI_MODELMAKER` | 自动检测 | tinyml-modelmaker 源代码目录路径（仅在自动检测失败时需要） |
 | `MMCLI_DATASETS` | 内置 `example_datasets/` | 覆盖包含示例数据集 zip 文件的目录 |
+
+---
+
+## CI / CD
+
+测试在每次推送和拉取请求时通过 GitHub Actions 自动运行：
+
+- **[test-cli.yml](.github/workflows/test-cli.yml)** — 在 Linux 和 Windows 上运行第 1-4 层测试
+- **[release.yml](.github/workflows/release.yml)** — 在标签推送时为 macOS、Linux 和 Windows 构建二进制文件
+
+创建发布：
+```bash
+git tag v0.9.1
+git push origin v0.9.1
+```
