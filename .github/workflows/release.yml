@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: Test (${{ matrix.os }})
 
@@ -66,6 +66,9 @@ jobs:
           - os: windows-latest
             artifact: mmcli-windows-x86_64
             binary: dist/mmcli.exe
+          - os: macos-latest
+            artifact: mmcli-macos-arm64
+            binary: dist/mmcli
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.os }})
 
@@ -89,6 +92,10 @@ jobs:
       - name: Build binary (Windows)
         if: runner.os == 'Windows'
         run: powershell -ExecutionPolicy Bypass -File build_windows.ps1
+
+      - name: Build binary (macOS)
+        if: runner.os == 'macOS'
+        run: bash build_macos.sh
 
       - name: Verify binary
         run: ${{ matrix.binary }} --version
@@ -122,13 +129,20 @@ jobs:
           name: mmcli-windows-x86_64
           path: artifacts/windows
 
+      - name: Download macOS binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mmcli-macos-arm64
+          path: artifacts/macos
+
       - name: Rename binaries with version
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           mkdir -p release
           cp artifacts/linux/mmcli "release/mmcli-${TAG}-linux-x86_64"
           cp artifacts/windows/mmcli.exe "release/mmcli-${TAG}-windows-x86_64.exe"
-          chmod +x "release/mmcli-${TAG}-linux-x86_64"
+          cp artifacts/macos/mmcli "release/mmcli-${TAG}-macos-arm64"
+          chmod +x "release/mmcli-${TAG}-linux-x86_64" "release/mmcli-${TAG}-macos-arm64"
           ls -la release/
 
       - name: Create GitHub Release
