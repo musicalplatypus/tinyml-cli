@@ -38,7 +38,7 @@ python3.10 -m venv ~/.venv-tinyml
 source ~/.venv-tinyml/bin/activate
 
 # Install tinyml_modelmaker from the release tag
-pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.8.0_Release#subdirectory=tinyml-modelmaker"
+pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.9.0_Release#subdirectory=tinyml-modelmaker"
 ```
 
 ### 2. Set the environment variable
@@ -58,7 +58,7 @@ cp dist/mmcli /usr/local/bin/mmcli   # or anywhere on your PATH
 
 **Option B — Build it yourself** (requires any Python + PyInstaller in an active venv):
 ```bash
-git clone --branch PlatypusCLI_0.8.0_Release https://github.com/musicalplatypus/tinyml-cli.git
+git clone --branch PlatypusCLI_0.9.0_Release https://github.com/musicalplatypus/tinyml-cli.git
 cd tinyml-cli
 source ~/.venv-ai/bin/activate        # any venv with PyInstaller
 pip install pyinstaller -q
