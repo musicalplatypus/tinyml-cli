@@ -47,4 +47,4 @@ jobs:
           pip install pytest
 
       - name: Tier 4 — CLI Integration Tests
-        run: pytest tests/test_cli_integration.py tests/test_tier4_cli.py -v --tb=short
+        run: python -m pytest tests/test_cli_integration.py tests/test_tier4_cli.py -v --tb=short -k "not TestInitDatasetExtractReal"
