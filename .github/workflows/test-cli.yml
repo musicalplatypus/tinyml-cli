@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: Tests (${{ matrix.os }})
+
+    steps:
+      - name: Checkout tinyml-cli
+        uses: actions/checkout@v4
+
+      - name: Checkout tinyml-tensorlab (dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: musicalplatypus/tinyml-tensorlab
+          ref: platypus_dev_1.3
+          path: tinyml-tensorlab
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install tinyml-tensorlab packages
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e tinyml-tensorlab/tinyml-modelzoo
+          pip install -e tinyml-tensorlab/tinyml-tinyverse
+          pip install -e "tinyml-tensorlab/tinyml-modeloptimization/torchmodelopt"
+          pip install -e tinyml-tensorlab/tinyml-modelmaker --no-deps
+          pip install defusedxml==0.7.1 "numpy==2.2.6" "PyYAML==6.0.3" "tqdm==4.67.1" "requests==2.32.5" "torch==2.7.1"
+
+      - name: Install tinyml-cli
+        run: |
+          pip install -e .
+          pip install pytest
+
+      - name: Tier 4 — CLI Integration Tests
+        run: pytest tests/test_cli_integration.py tests/test_tier4_cli.py -v --tb=short
