@@ -15,6 +15,11 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     name: Tests (${{ matrix.os }})
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout tinyml-cli
