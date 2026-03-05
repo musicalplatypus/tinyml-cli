@@ -1,0 +1,140 @@
+name: Release Build
+
+on:
+  push:
+    tags: ['v*', 'PlatypusCLI_*']  # e.g. v0.9.0, PlatypusCLI_0.9.0_Release
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. 0.9.0)'
+        required: true
+
+permissions:
+  contents: write  # needed to create/upload release assets
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Run tests first — fail fast before building
+  # ---------------------------------------------------------------------------
+  test:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: Test (${{ matrix.os }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout tinyml-tensorlab
+        uses: actions/checkout@v4
+        with:
+          repository: musicalplatypus/tinyml-tensorlab
+          ref: platypus_dev_1.3
+          path: tinyml-tensorlab
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e tinyml-tensorlab/tinyml-modelzoo
+          pip install -e tinyml-tensorlab/tinyml-tinyverse
+          pip install -e "tinyml-tensorlab/tinyml-modeloptimization/torchmodelopt"
+          pip install -e tinyml-tensorlab/tinyml-modelmaker --no-deps
+          pip install defusedxml==0.7.1 "numpy==2.2.6" "PyYAML==6.0.3" "tqdm==4.67.1" "requests==2.32.5" "torch==2.7.1"
+          pip install -e .
+          pip install pytest
+
+      - name: Run tests
+        run: pytest tests/test_cli_integration.py tests/test_tier4_cli.py -v --tb=short
+
+  # ---------------------------------------------------------------------------
+  # Build binaries (after tests pass)
+  # ---------------------------------------------------------------------------
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: mmcli-linux-x86_64
+            binary: dist/mmcli
+          - os: windows-latest
+            artifact: mmcli-windows-x86_64
+            binary: dist/mmcli.exe
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.os }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install mmcli + PyInstaller
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install .
+          pip install pyinstaller
+
+      - name: Build binary (Linux)
+        if: runner.os == 'Linux'
+        run: bash build_linux.sh
+
+      - name: Build binary (Windows)
+        if: runner.os == 'Windows'
+        run: powershell -ExecutionPolicy Bypass -File build_windows.ps1
+
+      - name: Verify binary
+        run: ${{ matrix.binary }} --version
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.binary }}
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release with binaries attached
+  # ---------------------------------------------------------------------------
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    name: Create Release
+
+    steps:
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mmcli-linux-x86_64
+          path: artifacts/linux
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mmcli-windows-x86_64
+          path: artifacts/windows
+
+      - name: Rename binaries with version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          mkdir -p release
+          cp artifacts/linux/mmcli "release/mmcli-${TAG}-linux-x86_64"
+          cp artifacts/windows/mmcli.exe "release/mmcli-${TAG}-windows-x86_64.exe"
+          chmod +x "release/mmcli-${TAG}-linux-x86_64"
+          ls -la release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
