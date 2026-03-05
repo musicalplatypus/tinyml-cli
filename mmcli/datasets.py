@@ -110,6 +110,45 @@ def list_datasets(task_type: str | None = None,
     return results
 
 
+def print_dataset_list(task_type: str | None = None,
+                       module: str | None = None) -> None:
+    """Print a formatted table of available datasets.
+
+    Used by ``mmcli init --list`` to show the user what datasets are
+    available before they create a project.
+    """
+    datasets = list_datasets(task_type=task_type, module=module)
+
+    if not datasets:
+        filters = []
+        if task_type:
+            filters.append(f"task={task_type}")
+        if module:
+            filters.append(f"module={module}")
+        print(f"No datasets found matching: {', '.join(filters)}")
+        return
+
+    # Column widths (minimum padding)
+    max_name = max(len(d["name"]) for d in datasets)
+    max_tasks = max(len(", ".join(d["task_types"])) for d in datasets)
+    max_mod = max(len(d.get("module", "")) for d in datasets)
+
+    # Header
+    print("\nAvailable example datasets:\n")
+    hdr = (f" {'Dataset':<{max_name}}  {'Task Types':<{max_tasks}}  "
+           f"{'Module':<{max_mod}}  Description")
+    print(hdr)
+    print("─" * len(hdr))
+
+    for d in datasets:
+        tasks_str = ", ".join(d["task_types"])
+        print(f" {d['name']:<{max_name}}  {tasks_str:<{max_tasks}}  "
+              f"{d.get('module', ''):<{max_mod}}  {d.get('description', '')}")
+
+    print(f"\n{len(datasets)} dataset(s) available. Create a project with:")
+    print("  mmcli init -t TASK_TYPE --dataset DATASET -p ./my_project\n")
+
+
 def get_dataset(name: str) -> dict | None:
     """Look up a single dataset by name. Returns None if not found."""
     meta = DATASET_REGISTRY.get(name)

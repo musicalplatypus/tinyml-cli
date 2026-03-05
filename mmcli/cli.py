@@ -605,32 +605,42 @@ def _add_init_parser(subparsers) -> None:
             "Example:\n"
             "  mmcli init -t arc_fault --dataset arc_fault_sample \\\n"
             "             -p ./my_arc_project\n\n"
-            "List available datasets with 'mmcli info'.\n"
+            "List available datasets:\n"
+            "  mmcli init --list\n"
+            "  mmcli init --list -m timeseries\n\n"
             "Set MMCLI_DATASETS to override the built-in datasets directory."
         ),
     )
     p.add_argument(
+        "--list", "-l",
+        action="store_true",
+        help="List available example datasets and exit.",
+    )
+    p.add_argument(
         "-t", "--task",
-        required=True,
+        required=False,
+        default=None,
         metavar="TASK_TYPE",
         help=(
-            "Task type for the new project.\n"
-            "Use 'mmcli info -m <module>' to see available tasks."
+            "Task type for the new project (required for extraction).\n"
+            "Also used as a filter with --list."
         ),
     )
     p.add_argument(
         "-p", "--project",
-        required=True,
+        required=False,
+        default=None,
         metavar="PROJECT_DIR",
         help="Path for the new project directory (must not already exist).",
     )
     p.add_argument(
         "--dataset",
-        required=True,
+        required=False,
+        default=None,
         metavar="DATASET_NAME",
         help=(
             "Name of the example dataset to use.\n"
-            "Use 'mmcli info -m <module> -t <task>' to see available datasets."
+            "Use 'mmcli init --list' to see available datasets."
         ),
     )
     p.add_argument(
@@ -638,7 +648,8 @@ def _add_init_parser(subparsers) -> None:
         default=None,
         choices=MODULES,
         metavar="MODULE",
-        help="AI module (auto-detected from dataset if omitted).",
+        help="AI module (auto-detected from dataset if omitted).\n"
+             "Also used as a filter with --list.",
     )
 
 
@@ -925,6 +936,26 @@ def main() -> None:
         sys.exit(0)
 
     if args.command == "init":
+        if args.list:
+            from mmcli.datasets import print_dataset_list
+            print_dataset_list(task_type=args.task, module=args.module)
+            sys.exit(0)
+        # Validate required args for extraction
+        missing = []
+        if not args.task:
+            missing.append("--task / -t")
+        if not args.project:
+            missing.append("--project / -p")
+        if not args.dataset:
+            missing.append("--dataset")
+        if missing:
+            print(
+                f"ERROR: The following arguments are required: "
+                f"{', '.join(missing)}\n"
+                f"Use 'mmcli init --list' to see available datasets.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         from mmcli.datasets import extract_dataset
         extract_dataset(
             dataset_name=args.dataset,

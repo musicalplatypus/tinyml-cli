@@ -20,3 +20,8 @@ include = ["mmcli*"]
 
 [tool.setuptools.package-data]
 mmcli = ["example_datasets/*.zip"]
+
+[tool.pytest.ini_options]
+markers = [
+    "cli: Tier 4 CLI integration tests",
+]
