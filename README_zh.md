@@ -39,7 +39,7 @@ python3.10 -m venv ~/.venv-tinyml
 source ~/.venv-tinyml/bin/activate
 
 # 从发布标签安装 tinyml_modelmaker
-pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.9.1_Release#subdirectory=tinyml-modelmaker"
+pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_1.0.0_Release#subdirectory=tinyml-modelmaker"
 ```
 
 ### 2. 设置环境变量
@@ -64,7 +64,7 @@ macOS (arm64)、Linux (x86_64) 和 Windows (x86_64) 的预编译二进制文件
 
 **方案 C — 自行编译**（需要任意 Python + 已激活虚拟环境中的 PyInstaller）：
 ```bash
-git clone --branch PlatypusCLI_0.9.1_Release https://github.com/musicalplatypus/tinyml-cli.git
+git clone --branch PlatypusCLI_1.0.0_Release https://github.com/musicalplatypus/tinyml-cli.git
 cd tinyml-cli
 source ~/.venv-ai/bin/activate        # 任何安装了 PyInstaller 的虚拟环境
 pip install pyinstaller -q
@@ -454,6 +454,6 @@ powershell build_windows.ps1     # → dist/mmcli.exe
 
 创建发布：
 ```bash
-git tag v0.9.1
-git push origin v0.9.1
+git tag v1.0.0
+git push origin v1.0.0
 ```

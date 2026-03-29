@@ -41,7 +41,7 @@ python3.10 -m venv ~/.venv-tinyml
 source ~/.venv-tinyml/bin/activate
 
 # Install tinyml_modelmaker from the release tag
-pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_0.9.1_Release#subdirectory=tinyml-modelmaker"
+pip install "tinyml_modelmaker @ git+https://github.com/musicalplatypus/tinyml-tensorlab.git@PlatypusCLI_1.0.0_Release#subdirectory=tinyml-modelmaker"
 ```
 
 ### 2. Set the environment variable
@@ -66,7 +66,7 @@ are published automatically on the [Releases page](https://github.com/musicalpla
 
 **Option C — Build it yourself** (requires any Python + PyInstaller in an active venv):
 ```bash
-git clone --branch PlatypusCLI_0.9.1_Release https://github.com/musicalplatypus/tinyml-cli.git
+git clone --branch PlatypusCLI_1.0.0_Release https://github.com/musicalplatypus/tinyml-cli.git
 cd tinyml-cli
 source ~/.venv-ai/bin/activate        # any venv with PyInstaller
 pip install pyinstaller -q
@@ -466,6 +466,6 @@ Tests run automatically on every push and pull request via GitHub Actions:
 
 To create a release:
 ```bash
-git tag v0.9.1
-git push origin v0.9.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
