@@ -536,6 +536,31 @@ class TestNASParser:
         assert p._nas_last_step['total_steps'] == 128
         assert p._nas_last_step['loss'] == pytest.approx(1.23)
         assert p._nas_last_step['acc'] == pytest.approx(33.33)
+        # Step should also be accumulated in nas_steps
+        assert len(p.nas_steps) == 1
+        assert p.nas_steps[0]['epoch'] == 0
+        assert p.nas_steps[0]['loss'] == pytest.approx(1.23)
+        assert p.nas_steps[0]['acc'] == pytest.approx(33.33)
+
+    def test_nas_step_chart_in_report(self):
+        """NAS step data should produce a step chart with mode switcher."""
+        p = TrainingLogParser()
+        # Feed step data + epoch data (chart needs both)
+        for line in [NAS_STEP_0, NAS_TRAIN_ACC_0, NAS_TEST_ACC_0, NAS_BEST]:
+            p.feed_line(line)
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as f:
+            path = f.name
+        try:
+            gen = HTMLReportGenerator(path)
+            gen.generate(p, is_complete=True)
+            html = open(path).read()
+            assert 'nasStepChart' in html
+            assert 'NAS Step Metrics' in html
+            assert 'nasStepSwitchMode' in html
+            assert 'Smoothed' in html
+            assert 'Aggregated' in html
+        finally:
+            os.unlink(path)
 
     def test_nas_no_interference_with_training(self):
         """NAS lines should not affect float_epochs or task_type."""

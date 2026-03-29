@@ -8,6 +8,7 @@ and a heatmap confusion matrix.
 
 import base64
 import glob
+import json
 import os
 import re
 from typing import Optional
@@ -196,6 +197,7 @@ class TrainingLogParser:
         self.nas_param_size = None   # search model size in MB
         self._nas_pending = {}       # accumulate NAS epoch data
         self._nas_last_step = {}     # last per-step data for progress display
+        self.nas_steps = []          # all per-step data [{epoch,loss,acc}]
         self.nas_genotype = None     # latest genotype string
         self.nas_best_genotype = None  # genotype at best epoch
         self.nas_budget = None       # total NAS search budget (epochs)
@@ -519,10 +521,10 @@ class TrainingLogParser:
             self.nas_param_size = float(pm.group(1))
             return False
 
-        # Per-step progress (for live ETA display)
+        # Per-step progress (for live ETA display and step chart)
         sm = _RE_NAS_STEP.search(message)
         if sm:
-            self._nas_last_step = {
+            step_data = {
                 'epoch': int(sm.group(1)),
                 'step': int(sm.group(2)),
                 'total_steps': int(sm.group(3)),
@@ -530,6 +532,12 @@ class TrainingLogParser:
                 'loss': float(sm.group(5)),
                 'acc': float(sm.group(6)),
             }
+            self._nas_last_step = step_data
+            self.nas_steps.append({
+                'epoch': step_data['epoch'],
+                'loss': step_data['loss'],
+                'acc': step_data['acc'],
+            })
             return False
 
         # Per-epoch train accuracy
@@ -587,6 +595,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 {auto_refresh}
 <title>mmcli Training Report</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   :root {{
@@ -647,6 +656,18 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .status.training {{ background:rgba(108,99,255,0.15); color:var(--accent); }}
   .status.complete {{ background:rgba(0,212,170,0.15); color:var(--accent2); }}
   .footer {{ text-align:center; color:var(--text-dim); font-size:12px; margin-top:40px; padding-top:20px; border-top:1px solid var(--border); }}
+  .step-toolbar {{ display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap; }}
+  .step-mode-switcher {{ display:flex; background:var(--surface2); border:1px solid var(--border); border-radius:10px; overflow:hidden; }}
+  .step-mode-btn {{ padding:8px 20px; border:none; background:transparent; color:var(--text-dim); font-size:13px; font-family:'Inter',sans-serif; cursor:pointer; transition:all 0.25s ease; white-space:nowrap; }}
+  .step-mode-btn:hover {{ color:var(--text); background:rgba(108,99,255,0.08); }}
+  .step-mode-btn.active {{ color:var(--accent); background:rgba(108,99,255,0.15); font-weight:500; }}
+  .step-mode-btn + .step-mode-btn {{ border-left:1px solid var(--border); }}
+  .step-toggles {{ display:flex; gap:8px; flex-wrap:wrap; }}
+  .step-toggle {{ padding:5px 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text-dim); font-size:12px; font-family:'Inter',sans-serif; cursor:pointer; transition:all 0.2s; display:flex; align-items:center; gap:6px; }}
+  .step-toggle .dot {{ width:8px; height:8px; border-radius:50%; }}
+  .step-toggle.active {{ border-color:rgba(108,99,255,0.4); color:var(--text); }}
+  .step-toggle:hover {{ background:rgba(108,99,255,0.08); }}
+  .step-sep {{ width:1px; height:28px; background:var(--border); }}
 </style>
 </head>
 <body>
@@ -662,6 +683,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
 
   {nas_chart_html}
+
+  {nas_step_chart_html}
 
   <div class="chart-section">
     <h2>Training Metrics</h2>
@@ -709,6 +732,7 @@ new Chart(document.getElementById('metricsChart'), {{
 }});
 
 {nas_chart_js}
+{nas_step_chart_js}
 </script>
 </body>
 </html>"""
@@ -986,6 +1010,125 @@ def _forecasting_var_table_to_html(best_dict: dict, test_data_metrics: list) -> 
     return html
 
 
+def _build_nas_step_chart(nas_steps: list, nas_best: dict) -> tuple:
+    """Build NAS per-step chart HTML and JS with smoothed/aggregated modes.
+
+    Returns (html_str, js_str) to be inserted into the report template.
+    """
+    # Embed compact data as JSON (only loss, acc, epoch per step)
+    step_data_json = json.dumps(
+        [{'l': s['loss'], 'a': s['acc'], 'e': s['epoch']} for s in nas_steps],
+        separators=(',', ':'),
+    )
+
+    # Determine steps per epoch from the data
+    epochs_seen = {}
+    for s in nas_steps:
+        epochs_seen.setdefault(s['epoch'], 0)
+        epochs_seen[s['epoch']] += 1
+    steps_per_epoch = max(epochs_seen.values()) if epochs_seen else 1
+    n_epochs = len(epochs_seen)
+    best_epoch = nas_best.get('epoch', -1)
+
+    html = (
+        '<div class="chart-section">'
+        '<h2>NAS Step Metrics</h2>'
+        '<div class="step-toolbar">'
+        '<div class="step-mode-switcher">'
+        '<button class="step-mode-btn active" onclick="nasStepSwitchMode(\'smoothed\',this)">'
+        '\u2009\U0001f4c8 Smoothed</button>'
+        '<button class="step-mode-btn" onclick="nasStepSwitchMode(\'aggregated\',this)">'
+        '\u2009\U0001f4ca Aggregated</button>'
+        '</div>'
+        '<div class="step-sep"></div>'
+        '<div class="step-toggles" id="nasStepToggles"></div>'
+        '</div>'
+        '<div style="position:relative;height:400px;"><canvas id="nasStepChart"></canvas></div>'
+        '</div>'
+    )
+
+    # JS: all logic self-contained, data embedded
+    js = (
+        "// ---------- NAS Per-Step Chart ----------\n"
+        "(function(){{\n"
+        "var _D={data};\n"
+        "var SPE={spe},NE={ne},BEST_EP={best_ep};\n"
+        "var rawL=_D.map(d=>d.l),rawA=_D.map(d=>d.a),labels=_D.map((_,i)=>i);\n"
+        "function ema(v,a){{var r=[v[0]];for(var i=1;i<v.length;i++)r.push(a*v[i]+(1-a)*r[i-1]);return r;}}\n"
+        "var sL=ema(rawL,0.05),sA=ema(rawA,0.05);\n"
+        "function agg(){{\n"
+        "  var ep={{}};_D.forEach(function(d){{if(!ep[d.e])ep[d.e]={{l:[],a:[]}};ep[d.e].l.push(d.l);ep[d.e].a.push(d.a);}});\n"
+        "  var keys=Object.keys(ep).map(Number).sort(function(a,b){{return a-b;}});\n"
+        "  return keys.map(function(k){{var L=ep[k].l,A=ep[k].a,mean=function(v){{return v.reduce(function(a,b){{return a+b;}})/v.length;}};\n"
+        "    return {{e:k,ml:mean(L),nl:Math.min.apply(null,L),xl:Math.max.apply(null,L),ma:mean(A),na:Math.min.apply(null,A),xa:Math.max.apply(null,A)}};\n"
+        "  }});\n"
+        "}}\n"
+        "var ag=agg();\n"
+        "var annSmooth={{}};for(var e=1;e<NE;e++)annSmooth['e'+e]={{type:'line',xMin:e*SPE,xMax:e*SPE,borderColor:'rgba(142,146,170,0.12)',borderWidth:1,borderDash:[4,4]}};\n"
+        "if(BEST_EP>=0)annSmooth.best={{type:'line',xMin:BEST_EP*SPE,xMax:BEST_EP*SPE,borderColor:'rgba(255,107,138,0.5)',borderWidth:2,borderDash:[6,3],\n"
+        "  label:{{display:true,content:'Best (ep.'+BEST_EP+')',position:'start',color:'#ff6b8a',font:{{size:11,family:'Inter'}},backgroundColor:'rgba(255,107,138,0.1)',padding:4}}}};\n"
+        "var annAgg={{}};\n"
+        "if(BEST_EP>=0)annAgg.best={{type:'line',xMin:BEST_EP,xMax:BEST_EP,borderColor:'rgba(255,107,138,0.5)',borderWidth:2,borderDash:[6,3],\n"
+        "  label:{{display:true,content:'Best (ep.'+BEST_EP+')',position:'start',color:'#ff6b8a',font:{{size:11,family:'Inter'}},backgroundColor:'rgba(255,107,138,0.1)',padding:4}}}};\n"
+        "function mkScales(xLbl){{return {{\n"
+        "  x:{{title:{{display:true,text:xLbl,color:'#8b8fa3',font:{{family:'Inter'}}}},grid:{{color:'#2e3348'}},ticks:{{color:'#8b8fa3',maxTicksLimit:20}}}},\n"
+        "  y:{{type:'linear',position:'left',title:{{display:true,text:'Loss',color:'#8b8fa3',font:{{family:'Inter'}}}},grid:{{color:'#2e3348'}},ticks:{{color:'#8b8fa3'}}}},\n"
+        "  y1:{{type:'linear',position:'right',title:{{display:true,text:'Accuracy (%)',color:'#8b8fa3',font:{{family:'Inter'}}}},grid:{{drawOnChartArea:false}},ticks:{{color:'#8b8fa3'}}}}\n"
+        "}};}}\n"
+        "var legFilt={{labels:{{color:'#8b8fa3',font:{{family:'Inter'}},filter:function(i){{return !i.text.startsWith('_');}}}}}};\n"
+        "var tipCb={{callbacks:{{title:function(items){{var s=items[0].parsed.x;return 'Epoch '+Math.floor(s/SPE)+' \\u00b7 Step '+(s%SPE)+'/'+SPE;}}}}}};\n"
+        "function smoothCfg(){{return {{type:'line',data:{{labels:labels,datasets:[\n"
+        "  {{label:'Loss (raw)',data:rawL,borderColor:'rgba(255,107,138,0.12)',borderWidth:1,pointRadius:0,tension:0.1,yAxisID:'y',fill:false}},\n"
+        "  {{label:'Loss (smoothed)',data:sL,borderColor:'#ff6b8a',borderWidth:2.5,pointRadius:0,tension:0.3,yAxisID:'y',fill:false}},\n"
+        "  {{label:'Accuracy (raw)',data:rawA,borderColor:'rgba(255,167,38,0.12)',borderWidth:1,pointRadius:0,tension:0.1,yAxisID:'y1',fill:false}},\n"
+        "  {{label:'Accuracy (smoothed)',data:sA,borderColor:'#ffa726',borderWidth:2.5,pointRadius:0,tension:0.3,yAxisID:'y1',fill:false}}\n"
+        "]}},options:{{responsive:true,maintainAspectRatio:false,animation:{{duration:400,easing:'easeOutCubic'}},interaction:{{mode:'index',intersect:false}},\n"
+        "  plugins:{{legend:legFilt,annotation:{{annotations:annSmooth}},tooltip:tipCb}},scales:mkScales('Global Step')\n"
+        "}}}};}}\n"
+        "function aggCfg(){{return {{type:'line',data:{{labels:ag.map(function(e){{return e.e;}}),datasets:[\n"
+        "  {{label:'Loss Range',data:ag.map(function(e){{return e.xl;}}),borderColor:'transparent',backgroundColor:'rgba(255,107,138,0.12)',pointRadius:0,fill:'+1',yAxisID:'y'}},\n"
+        "  {{label:'_lossBandLow',data:ag.map(function(e){{return e.nl;}}),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,fill:false,yAxisID:'y'}},\n"
+        "  {{label:'Mean Loss',data:ag.map(function(e){{return e.ml;}}),borderColor:'#ff6b8a',borderWidth:2.5,pointRadius:5,pointBackgroundColor:'#ff6b8a',pointBorderColor:'#1a1d27',pointBorderWidth:2,tension:0.3,yAxisID:'y',fill:false}},\n"
+        "  {{label:'Accuracy Range',data:ag.map(function(e){{return e.xa;}}),borderColor:'transparent',backgroundColor:'rgba(255,167,38,0.12)',pointRadius:0,fill:'+1',yAxisID:'y1'}},\n"
+        "  {{label:'_accBandLow',data:ag.map(function(e){{return e.na;}}),borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,fill:false,yAxisID:'y1'}},\n"
+        "  {{label:'Mean Accuracy',data:ag.map(function(e){{return e.ma;}}),borderColor:'#ffa726',borderWidth:2.5,pointRadius:5,pointBackgroundColor:'#ffa726',pointBorderColor:'#1a1d27',pointBorderWidth:2,tension:0.3,yAxisID:'y1',fill:false}}\n"
+        "]}},options:{{responsive:true,maintainAspectRatio:false,animation:{{duration:400,easing:'easeOutCubic'}},interaction:{{mode:'index',intersect:false}},\n"
+        "  plugins:{{legend:legFilt,annotation:{{annotations:annAgg}}}},scales:mkScales('Epoch')\n"
+        "}}}};}}\n"
+        "var smTogg=[{{l:'Loss (raw)',c:'rgba(255,107,138,0.4)',i:0}},{{l:'Loss (smoothed)',c:'#ff6b8a',i:1}},{{l:'Acc (raw)',c:'rgba(255,167,38,0.4)',i:2}},{{l:'Acc (smoothed)',c:'#ffa726',i:3}}];\n"
+        "var agTogg=[{{l:'Loss band',c:'rgba(255,107,138,0.35)',i:0,p:1}},{{l:'Mean Loss',c:'#ff6b8a',i:2}},{{l:'Acc band',c:'rgba(255,167,38,0.35)',i:3,p:4}},{{l:'Mean Accuracy',c:'#ffa726',i:5}}];\n"
+        "var _chart=null,_mode='smoothed';\n"
+        "function renderTogg(defs){{\n"
+        "  var c=document.getElementById('nasStepToggles');c.innerHTML='';\n"
+        "  defs.forEach(function(t){{\n"
+        "    var b=document.createElement('button');b.className='step-toggle active';\n"
+        "    b.innerHTML='<span class=\"dot\" style=\"background:'+t.c+'\"></span>'+t.l;\n"
+        "    b.addEventListener('click',function(){{\n"
+        "      var m=_chart.getDatasetMeta(t.i),h=!m.hidden;m.hidden=h;\n"
+        "      if(t.p!==undefined)_chart.getDatasetMeta(t.p).hidden=h;\n"
+        "      b.classList.toggle('active',!h);_chart.update();\n"
+        "    }});c.appendChild(b);\n"
+        "  }});\n"
+        "}}\n"
+        "function mkChart(cfg){{var cv=document.getElementById('nasStepChart');if(_chart)_chart.destroy();_chart=new Chart(cv,cfg);}}\n"
+        "window.nasStepSwitchMode=function(mode,btn){{\n"
+        "  if(mode===_mode)return;_mode=mode;\n"
+        "  document.querySelectorAll('.step-mode-btn').forEach(function(b){{b.classList.remove('active');}});\n"
+        "  btn.classList.add('active');\n"
+        "  if(mode==='smoothed'){{mkChart(smoothCfg());renderTogg(smTogg);}}else{{mkChart(aggCfg());renderTogg(agTogg);}}\n"
+        "}};\n"
+        "mkChart(smoothCfg());renderTogg(smTogg);\n"
+        "}})();\n"
+    ).format(
+        data=step_data_json,
+        spe=steps_per_epoch,
+        ne=n_epochs,
+        best_ep=best_epoch,
+    )
+
+    return html, js
+
+
 class HTMLReportGenerator:
     """Generate the HTML training report from parsed data."""
 
@@ -1122,6 +1265,8 @@ class HTMLReportGenerator:
         # Chart data — adaptive by task type
         chart_labels = [e['epoch'] for e in float_epochs]
         float_loss = [e['train_loss'] for e in float_epochs]
+        float_f1 = []
+        float_auc = []
 
         if task == 'classification':
             y_axis_label = 'Accuracy (%)'
@@ -1129,6 +1274,11 @@ class HTMLReportGenerator:
             float_secondary = [e.get('train_acc', 0) for e in float_epochs]
             primary_label = 'Val Accuracy'
             secondary_label = 'Train Accuracy'
+            # Per-epoch F1 and AUC (scaled to %) for charting
+            if float_epochs and any(e.get('val_f1') for e in float_epochs):
+                float_f1 = [e.get('val_f1', 0) * 100 for e in float_epochs]
+            if float_epochs and any(e.get('val_auc') for e in float_epochs):
+                float_auc = [e.get('val_auc', 0) * 100 for e in float_epochs]
         elif task == 'regression':
             y_axis_label = 'R²-Score'
             float_primary = [e.get('val_r2', 0) for e in float_epochs]
@@ -1148,6 +1298,10 @@ class HTMLReportGenerator:
             chart_datasets.append(_make_dataset_js(f'Float {secondary_label}', float_secondary, '#6c63ff', dashed=True, yaxis='y' if task == 'classification' else 'y1'))
         if task == 'classification':
             chart_datasets.append(_make_dataset_js('Float Loss', float_loss, '#ff6b8a', yaxis='y1'))
+            if float_f1:
+                chart_datasets.append(_make_dataset_js('Float Val F1 (%)', float_f1, '#ffd740', dashed=True, yaxis='y'))
+            if float_auc:
+                chart_datasets.append(_make_dataset_js('Float Val AUC (%)', float_auc, '#40c4ff', dashed=True, yaxis='y'))
         else:
             chart_datasets.append(_make_dataset_js('Float Loss', float_loss, '#ff6b8a', yaxis='y1'))
 
@@ -1179,10 +1333,25 @@ class HTMLReportGenerator:
             # Update loss dataset index
             loss_idx = 2 if float_secondary else 1
             chart_datasets[loss_idx] = _make_dataset_js('Float Loss', float_loss_padded, '#ff6b8a', yaxis='y1')
+            # Pad F1/AUC float series for quant extension
+            extra_idx = loss_idx + 1
+            if float_f1:
+                chart_datasets[extra_idx] = _make_dataset_js('Float Val F1 (%)', float_f1 + pad_float, '#ffd740', dashed=True, yaxis='y')
+                extra_idx += 1
+            if float_auc:
+                chart_datasets[extra_idx] = _make_dataset_js('Float Val AUC (%)', float_auc + pad_float, '#40c4ff', dashed=True, yaxis='y')
 
             chart_datasets.append(_make_dataset_js(f'Quant {primary_label}', quant_primary, '#00d4aa', yaxis='y'))
             if quant_secondary:
                 chart_datasets.append(_make_dataset_js(f'Quant {secondary_label}', quant_secondary, '#00d4aa', dashed=True, yaxis='y' if task == 'classification' else 'y1'))
+            # Quant F1 and AUC
+            if task == 'classification' and quant_epochs:
+                if any(e.get('val_f1') for e in quant_epochs):
+                    quant_f1 = pad_quant + [e.get('val_f1', 0) * 100 for e in quant_epochs]
+                    chart_datasets.append(_make_dataset_js('Quant Val F1 (%)', quant_f1, '#ffab00', dashed=True, yaxis='y'))
+                if any(e.get('val_auc') for e in quant_epochs):
+                    quant_auc = pad_quant + [e.get('val_auc', 0) * 100 for e in quant_epochs]
+                    chart_datasets.append(_make_dataset_js('Quant Val AUC (%)', quant_auc, '#00b0ff', dashed=True, yaxis='y'))
             chart_datasets.append(_make_dataset_js('Quant Loss', quant_loss, '#ffa726', yaxis='y1'))
 
         # Confusion matrix HTML (classification only)
@@ -1280,6 +1449,13 @@ class HTMLReportGenerator:
                 '</div>'
             )
 
+        # NAS per-step chart (smoothed + aggregated modes)
+        nas_step_chart_html = ''
+        nas_step_chart_js = ''
+        if parser.nas_steps:
+            nas_step_chart_html, nas_step_chart_js = _build_nas_step_chart(
+                parser.nas_steps, parser.nas_best)
+
         # Render
         html = _HTML_TEMPLATE.format(
             auto_refresh=auto_refresh,
@@ -1295,6 +1471,8 @@ class HTMLReportGenerator:
             y_axis_label=y_axis_label,
             nas_chart_html=nas_chart_html,
             nas_chart_js=nas_chart_js,
+            nas_step_chart_html=nas_step_chart_html,
+            nas_step_chart_js=nas_step_chart_js,
         )
 
         os.makedirs(os.path.dirname(self.output_path) or '.', exist_ok=True)
