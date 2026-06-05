@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NAS Per-Step Metrics — Prototype</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242837;
+    --border: #2e3348;
+    --text: #e4e6f0;
+    --text-dim: #8b8fa3;
+    --accent: #6c63ff;
+    --accent2: #00d4aa;
+    --accent3: #ff6b8a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); padding:24px; min-height:100vh; }
+  .container { max-width:1200px; margin:0 auto; }
+  h1 { font-size:28px; font-weight:700; margin-bottom:4px; background:linear-gradient(135deg,var(--accent),var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+  .subtitle { color:var(--text-dim); font-size:14px; margin-bottom:32px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:32px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; }
+  .card .label { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); margin-bottom:8px; }
+  .card .value { font-size:24px; font-weight:600; }
+  .card .value.accent { color:var(--accent); }
+  .card .value.accent2 { color:var(--accent2); }
+  .card .value.accent3 { color:var(--accent3); }
+  .chart-section { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; margin-bottom:24px; }
+  .chart-section h2 { font-size:18px; font-weight:600; margin-bottom:16px; color:var(--text); }
+  .chart-container { position:relative; height:400px; }
+  .status { display:inline-block; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:500; }
+  .status.complete { background:rgba(0,212,170,0.15); color:var(--accent2); }
+  .footer { text-align:center; color:var(--text-dim); font-size:12px; margin-top:40px; padding-top:20px; border-top:1px solid var(--border); }
+  .proto-badge { display:inline-block; background:rgba(255,107,138,0.15); color:var(--accent3); border:1px solid rgba(255,107,138,0.3); border-radius:6px; padding:4px 10px; font-size:11px; font-weight:500; letter-spacing:0.5px; margin-left:12px; vertical-align:middle; }
+
+  /* Toolbar */
+  .toolbar { display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+  .mode-switcher { display:flex; background:var(--surface2); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .mode-btn { padding:8px 20px; border:none; background:transparent; color:var(--text-dim); font-size:13px; font-family:'Inter',sans-serif; cursor:pointer; transition:all 0.25s ease; position:relative; white-space:nowrap; }
+  .mode-btn:hover { color:var(--text); background:rgba(108,99,255,0.08); }
+  .mode-btn.active { color:var(--accent); background:rgba(108,99,255,0.15); font-weight:500; }
+  .mode-btn + .mode-btn { border-left:1px solid var(--border); }
+
+  .series-toggles { display:flex; gap:8px; flex-wrap:wrap; }
+  .toggle-btn { padding:5px 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text-dim); font-size:12px; font-family:'Inter',sans-serif; cursor:pointer; transition:all 0.2s; display:flex; align-items:center; gap:6px; }
+  .toggle-btn .dot { width:8px; height:8px; border-radius:50%; }
+  .toggle-btn.active { border-color:rgba(108,99,255,0.4); color:var(--text); }
+  .toggle-btn.active .dot { box-shadow:0 0 6px currentColor; }
+  .toggle-btn:hover { background:rgba(108,99,255,0.08); }
+
+  .separator { width:1px; height:28px; background:var(--border); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <div>
+      <h1>NAS Per-Step Metrics</h1>
+      <span class="proto-badge">PROTOTYPE</span>
+    </div>
+    <span class="status complete">Complete</span>
+  </div>
+  <div class="subtitle">20 NAS search epochs · 128 steps/epoch · 2,560 total steps</div>
+
+  <div class="cards">
+    <div class="card"><div class="label">NAS Search</div><div class="value accent3">20/20 epochs</div></div>
+    <div class="card"><div class="label">NAS Best Acc</div><div class="value accent3">72.4%</div></div>
+    <div class="card"><div class="label">Best @ Epoch</div><div class="value">16</div></div>
+    <div class="card"><div class="label">NAS Device</div><div class="value">MPS</div></div>
+    <div class="card"><div class="label">Total Steps</div><div class="value accent">2,560</div></div>
+    <div class="card"><div class="label">Final Step Loss</div><div class="value">0.812</div></div>
+  </div>
+
+  <div class="chart-section">
+    <h2>NAS Architecture Search — Step Metrics</h2>
+
+    <div class="toolbar">
+      <div class="mode-switcher">
+        <button class="mode-btn active" onclick="switchMode('smoothed', this)" id="modeSmoothed">
+          <span style="margin-right:4px;">📈</span> Smoothed
+        </button>
+        <button class="mode-btn" onclick="switchMode('aggregated', this)" id="modeAggregated">
+          <span style="margin-right:4px;">📊</span> Aggregated
+        </button>
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="series-toggles" id="seriesToggles">
+        <!-- Populated by JS based on mode -->
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <canvas id="nasStepChart"></canvas>
+    </div>
+  </div>
+
+  <div class="footer">Prototype — NAS Per-Step Metrics Visualization · mmcli</div>
+</div>
+
+<script>
+// ---------- Synthetic NAS data ----------
+const EPOCHS = 20;
+const STEPS_PER_EPOCH = 128;
+
+function generateNASData() {
+  const steps = [];
+  for (let epoch = 0; epoch < EPOCHS; epoch++) {
+    const ep = epoch / EPOCHS;
+    const baseLoss = 2.8 * Math.exp(-2.5 * ep) + 0.7;
+    const baseAcc = 15 + 55 * (1 - Math.exp(-3 * ep));
+    for (let step = 0; step < STEPS_PER_EPOCH; step++) {
+      const sp = step / STEPS_PER_EPOCH;
+      let loss = baseLoss * (1 - 0.1 * sp) + (Math.random() - 0.5) * 0.3;
+      let acc = baseAcc + 5 * sp + (Math.random() - 0.5) * 8;
+      acc = Math.min(Math.max(acc, 5), 85);
+      loss = Math.max(loss, 0.3);
+      steps.push({
+        epoch, step,
+        globalStep: epoch * STEPS_PER_EPOCH + step,
+        loss: parseFloat(loss.toFixed(4)),
+        acc: parseFloat(acc.toFixed(2)),
+      });
+    }
+  }
+  return steps;
+}
+
+const rawData = generateNASData();
+
+// EMA smoothing
+function ema(values, alpha) {
+  const r = [values[0]];
+  for (let i = 1; i < values.length; i++) r.push(alpha * values[i] + (1 - alpha) * r[i - 1]);
+  return r;
+}
+
+const allLabels = rawData.map(d => d.globalStep);
+const rawLoss = rawData.map(d => d.loss);
+const rawAcc = rawData.map(d => d.acc);
+const smoothLoss = ema(rawLoss, 0.05);
+const smoothAcc = ema(rawAcc, 0.05);
+
+// Per-epoch aggregation
+function aggregate() {
+  const epochs = [];
+  for (let e = 0; e < EPOCHS; e++) {
+    const ed = rawData.filter(d => d.epoch === e);
+    const eL = ed.map(d => d.loss), eA = ed.map(d => d.acc);
+    const mean = arr => arr.reduce((a, b) => a + b) / arr.length;
+    epochs.push({
+      epoch: e,
+      meanLoss: mean(eL), minLoss: Math.min(...eL), maxLoss: Math.max(...eL),
+      meanAcc: mean(eA), minAcc: Math.min(...eA), maxAcc: Math.max(...eA),
+    });
+  }
+  return epochs;
+}
+const epochAgg = aggregate();
+
+// ---------- Epoch boundary annotations ----------
+function makeEpochAnnotations(isSmoothed) {
+  const a = {};
+  if (isSmoothed) {
+    for (let e = 1; e < EPOCHS; e++) {
+      a[`ep${e}`] = {
+        type:'line', xMin: e*STEPS_PER_EPOCH, xMax: e*STEPS_PER_EPOCH,
+        borderColor:'rgba(142,146,170,0.12)', borderWidth:1, borderDash:[4,4],
+      };
+    }
+    a.best = {
+      type:'line', xMin:16*STEPS_PER_EPOCH, xMax:16*STEPS_PER_EPOCH,
+      borderColor:'rgba(255,107,138,0.5)', borderWidth:2, borderDash:[6,3],
+      label:{ display:true, content:'Best (ep.16)', position:'start', color:'#ff6b8a',
+              font:{size:11,family:'Inter'}, backgroundColor:'rgba(255,107,138,0.1)', padding:4 },
+    };
+  } else {
+    a.best = {
+      type:'line', xMin:16, xMax:16,
+      borderColor:'rgba(255,107,138,0.5)', borderWidth:2, borderDash:[6,3],
+      label:{ display:true, content:'Best (ep.16)', position:'start', color:'#ff6b8a',
+              font:{size:11,family:'Inter'}, backgroundColor:'rgba(255,107,138,0.1)', padding:4 },
+    };
+  }
+  return a;
+}
+
+// ---------- Chart configuration builders ----------
+const commonLegend = { labels:{ color:'#8b8fa3', font:{family:'Inter'}, filter: i => !i.text.startsWith('_') } };
+const commonTooltipSmoothed = {
+  callbacks:{
+    title: items => {
+      const s = items[0].parsed.x;
+      return `Epoch ${Math.floor(s/STEPS_PER_EPOCH)} · Step ${s%STEPS_PER_EPOCH}/${STEPS_PER_EPOCH}`;
+    }
+  }
+};
+
+function scalesFor(xLabel) {
+  return {
+    x:{ title:{display:true, text:xLabel, color:'#8b8fa3', font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3', maxTicksLimit:20} },
+    y:{ type:'linear', position:'left', title:{display:true, text:'Loss', color:'#8b8fa3', font:{family:'Inter'}}, grid:{color:'#2e3348'}, ticks:{color:'#8b8fa3'} },
+    y1:{ type:'linear', position:'right', title:{display:true, text:'Accuracy (%)', color:'#8b8fa3', font:{family:'Inter'}}, grid:{drawOnChartArea:false}, ticks:{color:'#8b8fa3'} },
+  };
+}
+
+function smoothedConfig() {
+  return {
+    type:'line',
+    data:{
+      labels: allLabels,
+      datasets:[
+        { label:'Loss (raw)', data:rawLoss, borderColor:'rgba(255,107,138,0.12)', borderWidth:1, pointRadius:0, tension:0.1, yAxisID:'y', fill:false },
+        { label:'Loss (smoothed)', data:smoothLoss, borderColor:'#ff6b8a', borderWidth:2.5, pointRadius:0, tension:0.3, yAxisID:'y', fill:false },
+        { label:'Accuracy (raw)', data:rawAcc, borderColor:'rgba(255,167,38,0.12)', borderWidth:1, pointRadius:0, tension:0.1, yAxisID:'y1', fill:false },
+        { label:'Accuracy (smoothed)', data:smoothAcc, borderColor:'#ffa726', borderWidth:2.5, pointRadius:0, tension:0.3, yAxisID:'y1', fill:false },
+      ],
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{ duration:400, easing:'easeOutCubic' },
+      interaction:{ mode:'index', intersect:false },
+      plugins:{ legend:commonLegend, annotation:{ annotations:makeEpochAnnotations(true) }, tooltip:commonTooltipSmoothed },
+      scales:scalesFor('Global Step'),
+    },
+  };
+}
+
+function aggregatedConfig() {
+  return {
+    type:'line',
+    data:{
+      labels: epochAgg.map(e => e.epoch),
+      datasets:[
+        // Loss band
+        { label:'Loss Range', data:epochAgg.map(e=>e.maxLoss), borderColor:'transparent', backgroundColor:'rgba(255,107,138,0.12)', pointRadius:0, fill:'+1', yAxisID:'y' },
+        { label:'_lossBandLow', data:epochAgg.map(e=>e.minLoss), borderColor:'transparent', backgroundColor:'transparent', pointRadius:0, fill:false, yAxisID:'y' },
+        // Mean loss
+        { label:'Mean Loss', data:epochAgg.map(e=>e.meanLoss), borderColor:'#ff6b8a', borderWidth:2.5, pointRadius:5, pointBackgroundColor:'#ff6b8a', pointBorderColor:'#1a1d27', pointBorderWidth:2, tension:0.3, yAxisID:'y', fill:false },
+        // Acc band
+        { label:'Accuracy Range', data:epochAgg.map(e=>e.maxAcc), borderColor:'transparent', backgroundColor:'rgba(255,167,38,0.12)', pointRadius:0, fill:'+1', yAxisID:'y1' },
+        { label:'_accBandLow', data:epochAgg.map(e=>e.minAcc), borderColor:'transparent', backgroundColor:'transparent', pointRadius:0, fill:false, yAxisID:'y1' },
+        // Mean accuracy
+        { label:'Mean Accuracy', data:epochAgg.map(e=>e.meanAcc), borderColor:'#ffa726', borderWidth:2.5, pointRadius:5, pointBackgroundColor:'#ffa726', pointBorderColor:'#1a1d27', pointBorderWidth:2, tension:0.3, yAxisID:'y1', fill:false },
+      ],
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      animation:{ duration:400, easing:'easeOutCubic' },
+      interaction:{ mode:'index', intersect:false },
+      plugins:{ legend:commonLegend, annotation:{ annotations:makeEpochAnnotations(false) } },
+      scales:scalesFor('Epoch'),
+    },
+  };
+}
+
+// ---------- Series toggle definitions ----------
+const smoothedToggles = [
+  { label:'Loss (raw)',      color:'rgba(255,107,138,0.4)', idx:0 },
+  { label:'Loss (smoothed)', color:'#ff6b8a',               idx:1 },
+  { label:'Acc (raw)',        color:'rgba(255,167,38,0.4)',  idx:2 },
+  { label:'Acc (smoothed)',   color:'#ffa726',               idx:3 },
+];
+const aggregatedToggles = [
+  { label:'Loss band',     color:'rgba(255,107,138,0.35)', idx:0, paired:1 },
+  { label:'Mean Loss',     color:'#ff6b8a',                idx:2 },
+  { label:'Acc band',      color:'rgba(255,167,38,0.35)',  idx:3, paired:4 },
+  { label:'Mean Accuracy', color:'#ffa726',                idx:5 },
+];
+
+function renderToggles(toggleDefs) {
+  const container = document.getElementById('seriesToggles');
+  container.innerHTML = '';
+  toggleDefs.forEach(t => {
+    const btn = document.createElement('button');
+    btn.className = 'toggle-btn active';
+    btn.innerHTML = `<span class="dot" style="background:${t.color}"></span>${t.label}`;
+    btn.addEventListener('click', () => {
+      const meta = chart.getDatasetMeta(t.idx);
+      const hidden = !meta.hidden;
+      meta.hidden = hidden;
+      // Toggle paired band dataset too
+      if (t.paired !== undefined) {
+        chart.getDatasetMeta(t.paired).hidden = hidden;
+      }
+      btn.classList.toggle('active', !hidden);
+      chart.update();
+    });
+    container.appendChild(btn);
+  });
+}
+
+// ---------- Chart init & mode switching ----------
+let chart = null;
+let currentMode = 'smoothed';
+
+function createChart(config) {
+  const canvas = document.getElementById('nasStepChart');
+  if (chart) chart.destroy();
+  chart = new Chart(canvas, config);
+}
+
+function switchMode(mode, btn) {
+  if (mode === currentMode) return;
+  currentMode = mode;
+
+  // Update button states
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  // Rebuild chart
+  if (mode === 'smoothed') {
+    createChart(smoothedConfig());
+    renderToggles(smoothedToggles);
+  } else {
+    createChart(aggregatedConfig());
+    renderToggles(aggregatedToggles);
+  }
+}
+
+// Initial render
+createChart(smoothedConfig());
+renderToggles(smoothedToggles);
+</script>
+</body>
+</html>
