@@ -6,7 +6,7 @@ Covers the full spectrum from `test_analysis.md` Tier 4:
   Test 20: `mmcli info` all tasks ✅ (existing in test_cli_integration.py)
   Test 21: `mmcli info` device filtering
   Test 22: `mmcli train --dry-run` per task type ✅ (existing)
-  Test 23: `mmcli init` — bundled dataset extraction for all 9 datasets
+  Test 23: `mmcli init` — bundled dataset extraction for all registered datasets
   Test 24: Report generation per task type ✅ (existing in test_report.py)
 
 This file adds Tests 21 and 23 and extends existing CLI coverage.
@@ -153,7 +153,7 @@ class TestInitDatasetExtraction:
     """Verify all bundled datasets are accessible and well-formed."""
 
     def test_list_datasets_returns_all_registered(self):
-        """list_datasets() API should return all 9 registered datasets."""
+        """list_datasets() API should return all registered datasets."""
         from mmcli.datasets import list_datasets, DATASET_REGISTRY
 
         result = list_datasets()
@@ -162,7 +162,9 @@ class TestInitDatasetExtraction:
             f"Mismatch: list_datasets returned {names}, "
             f"registry has {set(DATASET_REGISTRY.keys())}"
         )
-        assert len(result) == 9, f"Expected 9 datasets, got {len(result)}"
+        assert len(result) == len(DATASET_REGISTRY), (
+            f"Expected {len(DATASET_REGISTRY)} datasets, got {len(result)}"
+        )
 
     def test_list_datasets_filter_by_task(self):
         """list_datasets() with task_type filter should return relevant datasets."""
@@ -192,7 +194,7 @@ class TestInitDatasetExtractReal:
     """Extract each bundled dataset and verify directory structure.
 
     These tests use the actual bundled zips, not mocks.
-    They are parametrized over all 9 datasets in DATASET_REGISTRY.
+    They are parametrized over all registered datasets in DATASET_REGISTRY.
     """
 
     # All 9 bundled datasets
