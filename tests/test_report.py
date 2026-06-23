@@ -10,6 +10,7 @@ from mmcli.report import (
     HTMLReportGenerator,
     create_report_handler,
     _pca_images_to_html,
+    _find_pca_images,
     _forecasting_var_table_to_html,
 )
 
@@ -615,6 +616,70 @@ class TestNASParser:
             assert 'NAS search epochs' in html
         finally:
             os.unlink(path)
+
+    def test_nas_multi_epoch_report_completes(self):
+        """generate(is_complete=True) must not hang with many NAS epochs and steps.
+
+        Regression test for _find_pca_images recursing into filesystem root when
+        the report output path is directly under a top-level directory (e.g. /tmp).
+        """
+        import math
+        import signal
+
+        p = TrainingLogParser()
+
+        def L(s):
+            p.feed_line("   INFO: root.modelopt.nas.search: " + s)
+
+        p.feed_line("   INFO: root.modelopt.nas   : NAS device: mps (Apple Metal)")
+        L("param size = 0.013075MB")
+        for e in range(4):
+            for s in range(8):
+                loss = max(0.05, 1.5 * math.exp(-0.3 * e) - 0.01 * s)
+                acc = 40 + 40 * (1 - math.exp(-0.3 * e)) + 0.5 * s
+                p.feed_line(
+                    f"   INFO: root.modelopt.nas.train: Epoch: [{e}]  [{s:03d}/8]"
+                    f"  eta: 00:00:01  lr: 0.025  samples/s: 45.2"
+                    f"  loss: {loss:.3f}  acc1: {acc:.2f}"
+                )
+            L(f"Train:  Acc@1 {60.0 + e:.6f}")
+            L(f"Test:  Acc@1 {55.0 + e:.6f}")
+            L(f"New best genotype at epoch {e} (Acc@1 {55.0 + e:.6f})")
+
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False, dir='/tmp') as f:
+            path = f.name
+        try:
+            def _timeout(signum, frame):
+                raise TimeoutError("generate() hung — likely _find_pca_images filesystem-root scan")
+
+            signal.signal(signal.SIGALRM, _timeout)
+            signal.alarm(10)
+            try:
+                HTMLReportGenerator(path).generate(p, is_complete=True)
+            finally:
+                signal.alarm(0)
+            html = open(path).read()
+            assert 'nasStepChart' in html
+            assert 'NAS Step Metrics' in html
+        finally:
+            os.unlink(path)
+
+    def test_find_pca_images_does_not_search_root(self):
+        """_find_pca_images must not add filesystem root to the recursive search list."""
+        # With a report dir of /tmp (two levels from root on macOS /private/tmp),
+        # the search_dirs list must never contain '/'.
+        import signal
+
+        def _timeout(signum, frame):
+            raise TimeoutError("_find_pca_images hung — filesystem root in search path")
+
+        signal.signal(signal.SIGALRM, _timeout)
+        signal.alarm(5)
+        try:
+            result = _find_pca_images('/tmp')
+        finally:
+            signal.alarm(0)
+        assert isinstance(result, list)
 
     def test_nas_subtitle_includes_search_count(self):
         p = TrainingLogParser()

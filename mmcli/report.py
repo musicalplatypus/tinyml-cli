@@ -917,12 +917,15 @@ def _find_pca_images(report_dir: str) -> list:
         ('Validation Data', 'pca_on_feature_extracted_validation_data.png'),
     ]
     found = []
-    # Search report dir and up to 3 levels of parent directories
+    # Search report dir and up to 3 levels of parent directories (never past root)
     search_dirs = [report_dir]
     parent = report_dir
     for _ in range(3):
-        parent = os.path.dirname(parent)
-        if parent and parent != report_dir:
+        new_parent = os.path.dirname(parent)
+        if not new_parent or new_parent == parent:
+            break
+        parent = new_parent
+        if parent not in search_dirs:
             search_dirs.append(parent)
 
     for title, filename in pca_files:
@@ -932,7 +935,9 @@ def _find_pca_images(report_dir: str) -> list:
             if os.path.isfile(path):
                 found.append((title, path))
                 break
-            # Recursive glob within this dir
+            # Recursive glob within this dir (skip filesystem root to avoid full-system scan)
+            if os.path.dirname(search_dir) == search_dir:
+                continue
             matches = glob.glob(os.path.join(search_dir, '**', filename), recursive=True)
             if matches:
                 found.append((title, matches[0]))
