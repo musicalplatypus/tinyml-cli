@@ -19,7 +19,7 @@ where = ["."]
 include = ["mmcli*"]
 
 [tool.setuptools.package-data]
-mmcli = ["example_datasets/*.zip"]
+mmcli = ["example_datasets/*.zip", "data/*.yaml"]
 
 [tool.pytest.ini_options]
 markers = [

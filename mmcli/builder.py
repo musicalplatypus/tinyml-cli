@@ -17,6 +17,40 @@ logger = logging.getLogger(__name__)
 # Mirrors constants.COMPILATION_DEFAULT in tinyml-modelmaker
 COMPILATION_DEFAULT_PRESET = "default_preset"
 
+# Devices with a hardware NPU (mirrors compilation.py in agent-skills)
+_NPU_DEVICES = frozenset({
+    "F28P55", "F28P65",       # C2000 with TI-NNPU
+    "MSPM0G5187",              # MSPM0 with TI-NPU
+    "MSPM33C34",               # MSPM33 with TI-NPU
+    "CC2755", "CC35X1",        # Connectivity with TI-NPU
+    "AM13E2",                  # AM13 with TI-NPU
+})
+
+# Tasks where the CPU inference path is preferred even on NPU devices
+_SOFT_NPU_PREFERRED_TASKS = frozenset({
+    "generic_timeseries_anomalydetection",
+    "generic_timeseries_forecasting",
+})
+
+
+def resolve_auto_preset(device: str | None, task: str | None,
+                        quantization: str | None) -> str:
+    """Resolve '--preset auto' to a concrete compile_preset_name.
+
+    Logic (mirrors agent-skills compilation.py):
+      - No NPU device             → default_preset
+      - NPU device + soft task    → forced_soft_npu_preset
+      - NPU device + non-TI-quant → forced_soft_npu_preset
+      - NPU device + TI-quant     → default_preset (NPU path)
+    """
+    if not device or device not in _NPU_DEVICES:
+        return "default_preset"
+    if task and task in _SOFT_NPU_PREFERRED_TASKS:
+        return "forced_soft_npu_preset"
+    if quantization and quantization != "QUANTIZATION_TINPU":
+        return "forced_soft_npu_preset"
+    return "default_preset"
+
 # ---------------------------------------------------------------------------
 # Minimal skeleton — every section that tinyml_modelmaker.main() reads
 # ---------------------------------------------------------------------------
@@ -181,7 +215,15 @@ def build_config(args) -> dict:
 
     # --- compilation ---
     _set(config, "compilation", "model_path", getattr(args, "onnx", None))
-    _set(config, "compilation", "compile_preset_name", getattr(args, "preset", None))
+    preset = getattr(args, "preset", None)
+    if preset == "auto":
+        preset = resolve_auto_preset(
+            device=getattr(args, "device", None),
+            task=getattr(args, "task", None),
+            quantization=getattr(args, "quantization", None),
+        )
+        logger.info("--preset auto resolved to: %s", preset)
+    _set(config, "compilation", "compile_preset_name", preset)
 
     # compile subcommand still needs model_name for preset lookup
     if command == "compile" and config["training"]["model_name"] is None:

@@ -4,6 +4,8 @@ Model and feature-extraction preset recommendations for mmcli.
 Reads the tinyml-modelzoo examples directory (config.yaml / config_*.yaml)
 and scores each example against the user's task/device/variables to recommend
 the best-matching model name and feature extraction preset.
+
+Also reads the bundled schema.yaml for task-specific FE preset guidance.
 """
 
 import os
@@ -11,6 +13,30 @@ import re
 import sys
 import yaml
 from typing import Any, Optional
+
+
+# ---------------------------------------------------------------------------
+# Schema loader (bundled schema.yaml)
+# ---------------------------------------------------------------------------
+
+_SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "data", "schema.yaml")
+_SCHEMA: dict | None = None
+
+
+def _load_schema() -> dict:
+    global _SCHEMA
+    if _SCHEMA is None:
+        try:
+            with open(_SCHEMA_PATH) as fh:
+                _SCHEMA = yaml.safe_load(fh) or {}
+        except Exception:
+            _SCHEMA = {}
+    return _SCHEMA
+
+
+def _task_fe_recommendations(task_type: str) -> dict:
+    """Return the task_recommendations entry for task_type (or empty dict)."""
+    return _load_schema().get("task_recommendations", {}).get(task_type, {})
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +310,7 @@ def get_recommendations(
     return {
         "success": True,
         "error": None,
+        "task_type": task_type,
         "recommended_model": scored[0]["model_name"] if scored else None,
         "recommended_fe_preset": scored[0]["feature_extraction_name"] if scored else None,
         "match_score": scored[0]["score"] if scored else 0,
@@ -305,12 +332,27 @@ def print_recommendations(result: dict, top_n: int = 5) -> None:
     ranked = result["ranked"]
     best = result["recommended_model"]
     fe = result["recommended_fe_preset"]
+    task_type = result.get("task_type", "")
+    task_guidance = _task_fe_recommendations(task_type)
 
     print(f"\nRecommended model:   {best or '(none)'}")
     if fe:
         print(f"Feature extraction:  {fe}")
     if result.get("dataset_complexity_note"):
         print(f"Size guidance:       {result['dataset_complexity_note']}")
+
+    # Task-specific FE preset guidance from schema.yaml
+    if task_guidance.get("recommended_presets"):
+        presets = task_guidance["recommended_presets"]
+        print(f"\nTask FE presets for '{task_type}':")
+        for p in presets:
+            print(f"  {p}")
+        if task_guidance.get("preset_reason"):
+            print(f"  — {task_guidance['preset_reason']}")
+    if task_guidance.get("required_data_proc"):
+        print(f"  Required transforms: {', '.join(task_guidance['required_data_proc'])}")
+    if task_guidance.get("notes"):
+        print(f"  Note: {task_guidance['notes']}")
 
     print(f"\nTop {min(top_n, len(ranked))} matches (score 0–6; variables match = +2):\n")
     name_w = max((len(r["model_name"] or "") for r in ranked[:top_n]), default=10) + 2

@@ -537,7 +537,14 @@ def _add_compilation_args(parser: argparse.ArgumentParser) -> None:
         "--preset",
         metavar="PRESET_NAME",
         default=None,
-        help="Compilation preset name. Default: 'default_preset'.",
+        help=(
+            "Compilation preset name. Options:\n"
+            "  default_preset           Best available path (NPU if device supports it)\n"
+            "  forced_soft_npu_preset   Force CPU path (recommended for anomaly/forecasting)\n"
+            "  compress_npu_layer_data  NPU path with compressed weights (tight SRAM)\n"
+            "  auto                     Pick the best preset for this device and task\n"
+            "Default: 'default_preset'."
+        ),
     )
 
 
