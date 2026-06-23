@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Known enumerations (for --help text)
 # ---------------------------------------------------------------------------
 
-MODULES = ["timeseries", "vision"]
+MODULES = ["timeseries", "vision", "audio"]
 
 TASK_TYPES_TIMESERIES = [
     "generic_timeseries_classification",
@@ -59,7 +59,7 @@ TARGET_DEVICES = [
     "MSPM0G3507", "MSPM0G3519", "MSPM0G5187",
     "MSPM33C32", "MSPM33C34",
     # SimpleLink
-    "CC2755", "CC1352", "CC1354", "CC35X1",
+    "CC1312", "CC1314", "CC1352", "CC1354", "CC2755", "CC35X1",
     # Sitara
     "AM263", "AM263P", "AM261", "AM13E2",
 ]
@@ -203,6 +203,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
             "AI module to use.\n"
             "  timeseries  Time-series classification, regression, etc.\n"
             "  vision      Image classification\n"
+            "  audio       Audio / speech classification\n"
             "Required unless provided via --config."
         ),
     )
@@ -233,7 +234,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
             "           F28P55  F28P65  F29H85  F29P58  F29P32\n"
             "MSPM0:     MSPM0G3507  MSPM0G3519  MSPM0G5187\n"
             "           MSPM33C32  MSPM33C34\n"
-            "SimpleLink: CC2755  CC1352  CC1354  CC35X1\n"
+            "SimpleLink: CC1312  CC1314  CC1352  CC1354  CC2755  CC35X1\n"
             "Sitara:    AM263  AM263P  AM261  AM13E2"
         ),
     )
@@ -577,7 +578,7 @@ def _add_info_parser(subparsers) -> None:
         required=True,
         choices=MODULES,
         metavar="MODULE",
-        help="AI module (timeseries or vision).",
+        help="AI module (timeseries, vision, or audio).",
     )
     p.add_argument(
         "-t", "--task",

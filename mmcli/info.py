@@ -28,6 +28,8 @@ try:
         from tinyml_modelmaker.ai_modules.timeseries import constants, training
     elif module_name == "vision":
         from tinyml_modelmaker.ai_modules.vision import constants, training
+    elif module_name == "audio":
+        from tinyml_modelmaker.ai_modules.audio import constants, training
     else:
         print(json.dumps({{"error": f"Unknown module: {{module_name}}"}}))
         sys.exit(0)
@@ -157,7 +159,7 @@ _DEVICE_FAMILIES = {
         "MSPM0G3507", "MSPM0G3519", "MSPM0G5187",
         "MSPM33C32", "MSPM33C34",
     ],
-    "SimpleLink": ["CC2755", "CC1352", "CC1354", "CC35X1"],
+    "SimpleLink": ["CC1312", "CC1314", "CC1352", "CC1354", "CC2755", "CC35X1"],
     "Sitara": ["AM263", "AM263P", "AM261", "AM13E2"],
 }
 
