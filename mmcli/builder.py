@@ -139,6 +139,15 @@ def build_config(args) -> dict:
     _set(config, "training", "learning_rate", getattr(args, "lr", None))
     _set(config, "training", "num_gpus", getattr(args, "gpus", None))
     _set(config, "training", "quantization", getattr(args, "quantization", None))
+    _set(config, "training", "auto_quantization", getattr(args, "auto_quantization", None))
+    _set(config, "training", "autoquant_tolerance_classification",
+         getattr(args, "autoquant_tolerance_classification", None))
+    _set(config, "training", "autoquant_tolerance_regression",
+         getattr(args, "autoquant_tolerance_regression", None))
+    _set(config, "training", "autoquant_tolerance_forecasting",
+         getattr(args, "autoquant_tolerance_forecasting", None))
+    _set(config, "training", "autoquant_tolerance_anomaly",
+         getattr(args, "autoquant_tolerance_anomaly", None))
 
     # Performance optimization flags
     _set(config, "training", "compile_model", getattr(args, "compile_model", None))

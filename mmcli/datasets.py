@@ -87,6 +87,12 @@ DATASET_REGISTRY: dict[str, dict] = {
         "module": "vision",
         "description": "MNIST handwritten digit classification (28×28 images)",
     },
+    "generic_audio_classification": {
+        "filename": "generic_audio_classification.zip",
+        "task_types": ["audio_classification"],
+        "module": "audio",
+        "description": "Synthetic 2-class audio (yes/no) — 16kHz sine-wave WAV files",
+    },
 }
 
 

@@ -2,12 +2,14 @@
 mmcli — command-line interface for tinyml-modelmaker.
 
 Subcommands:
-  init     Create a new project from an example dataset
-  train    Train a model and export ONNX (no compilation)
-  compile  Compile an existing ONNX file (no training)
-  run      Full pipeline: train then compile
-  info     Show supported devices, models, and feature extraction presets
-  help     Show detailed help for all subcommands
+  init       Create a new project from an example dataset
+  train      Train a model and export ONNX (no compilation)
+  compile    Compile an existing ONNX file (no training)
+  run        Full pipeline: train then compile
+  info       Show supported devices, models, and feature extraction presets
+  analyze    Analyse a project dataset (size, classes, sequence length)
+  recommend  Recommend a model and FE preset from tinyml-modelzoo examples
+  help       Show detailed help for all subcommands
 
 Runtime requirements (not bundled in the binary):
   MMCLI_PYTHON  Path to the Python interpreter that has tinyml_modelmaker
@@ -386,6 +388,55 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
             "  QUANTIZATION_TINPU Quantize for TI NPU target"
         ),
     )
+    aq = group.add_mutually_exclusive_group()
+    aq.add_argument(
+        "--auto-quantization",
+        dest="auto_quantization",
+        action="store_true",
+        default=None,
+        help=(
+            "Enable auto-quantization: binary-search for the lowest bitwidth\n"
+            "that keeps accuracy within the tolerance threshold (default: on)."
+        ),
+    )
+    aq.add_argument(
+        "--no-auto-quantization",
+        dest="auto_quantization",
+        action="store_false",
+        help="Disable auto-quantization and use fixed 8-bit quantization.",
+    )
+    group.add_argument(
+        "--autoquant-tolerance-classification",
+        dest="autoquant_tolerance_classification",
+        type=float,
+        default=None,
+        metavar="FRAC",
+        help="Max accuracy drop tolerated by auto-quantization (default: 0.05 = 5%%).",
+    )
+    group.add_argument(
+        "--autoquant-tolerance-regression",
+        dest="autoquant_tolerance_regression",
+        type=float,
+        default=None,
+        metavar="FRAC",
+        help="Max R² drop tolerated by auto-quantization (default: 0.05 = 5%%).",
+    )
+    group.add_argument(
+        "--autoquant-tolerance-forecasting",
+        dest="autoquant_tolerance_forecasting",
+        type=float,
+        default=None,
+        metavar="MULT",
+        help="Max SMAPE increase tolerated (default: 2.0 = 3× float baseline).",
+    )
+    group.add_argument(
+        "--autoquant-tolerance-anomaly",
+        dest="autoquant_tolerance_anomaly",
+        type=float,
+        default=None,
+        metavar="MULT",
+        help="Max MSE increase tolerated for anomaly detection (default: 2.0).",
+    )
 
     # Performance optimization flags (advanced)
     perf = parser.add_argument_group("performance options (advanced)")
@@ -654,6 +705,110 @@ def _add_init_parser(subparsers) -> None:
     )
 
 
+def _add_analyze_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "analyze",
+        help="Analyse a project dataset (size, classes, sequence length).",
+        description=(
+            "Inspect a project's dataset/ directory and report:\n"
+            "  - Total sample count and per-class distribution\n"
+            "  - Minimum sequence length\n"
+            "  - Dataset size bucket (tiny/small/medium/large)\n\n"
+            "The 'size bucket' output can be passed directly to 'mmcli recommend'\n"
+            "via --dataset-size-bucket to improve model selection accuracy."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "-i", "--project",
+        required=True,
+        metavar="DIR",
+        help=(
+            "Project directory containing dataset/. "
+            "May also point directly at the dataset folder."
+        ),
+    )
+
+
+def _add_recommend_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "recommend",
+        help="Recommend a model and FE preset from tinyml-modelzoo examples.",
+        description=(
+            "Score every tinyml-modelzoo example against your task, device,\n"
+            "and (optionally) variable count and dataset size, then print a\n"
+            "ranked shortlist of the best-matching models and feature extraction\n"
+            "presets.\n\n"
+            "Modelzoo path resolution (in order):\n"
+            "  1. --modelzoo-path argument\n"
+            "  2. MMCLI_MODELZOO_PATH env var (set to repo root)\n"
+            "  3. Auto-detected sibling of the installed tinyml_modelmaker package\n"
+            "  4. Common default paths (~/tinyml-tensorlab/tinyml-modelzoo, etc.)"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    req = p.add_argument_group("required")
+    req.add_argument(
+        "-t", "--task",
+        required=True,
+        metavar="TASK_TYPE",
+        help="Task type (e.g. arc_fault, generic_timeseries_classification).",
+    )
+    req.add_argument(
+        "-d", "--device",
+        required=True,
+        metavar="DEVICE",
+        choices=TARGET_DEVICES,
+        help="Target MCU device (see 'mmcli info' for the full list).",
+    )
+    opt = p.add_argument_group("optional")
+    opt.add_argument(
+        "-m", "--module",
+        choices=MODULES,
+        default=None,
+        metavar="MODULE",
+        help=(
+            "Target module (timeseries/vision/audio). "
+            "Auto-inferred from --task when omitted."
+        ),
+    )
+    opt.add_argument(
+        "--variables",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Number of sensor channels / input variables. Boosts score by +2 for exact matches.",
+    )
+    opt.add_argument(
+        "--dataset-size-bucket",
+        dest="dataset_size_bucket",
+        choices=["tiny", "small", "medium", "large"],
+        default=None,
+        metavar="BUCKET",
+        help=(
+            "Dataset size bucket from 'mmcli analyze'.\n"
+            "  tiny   < 500 samples   → prefer models ≤ 2k params\n"
+            "  small  500–4,999       → prefer models ≤ 10k params\n"
+            "  medium 5k–49,999       → prefer models ≤ 30k params\n"
+            "  large  ≥ 50,000        → no restriction"
+        ),
+    )
+    opt.add_argument(
+        "--top",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Number of ranked matches to display (default: 5).",
+    )
+    opt.add_argument(
+        "--modelzoo-path",
+        dest="modelzoo_path",
+        default=None,
+        metavar="DIR",
+        help="Path to the tinyml-modelzoo repo root (or its examples/ subdirectory).",
+    )
+
+
 def _add_about_parser(subparsers) -> None:
     subparsers.add_parser(
         "about",
@@ -878,13 +1033,15 @@ def main() -> None:
         description=(
             "mmcli — command-line interface for tinyml-modelmaker\n\n"
             "Subcommands:\n"
-            "  init     Create a new project from an example dataset\n"
-            "  train    Train a model and export ONNX (uses Metal/MPS on macOS)\n"
-            "  compile  Compile an existing ONNX file (Linux/Windows only)\n"
-            "  run      Full pipeline: train then compile\n"
-            "  info     Show supported devices, models, and presets\n"
-            "  about    Show copyright, credits, and version info\n"
-            "  help     Show detailed help for all subcommands\n\n"
+            "  init       Create a new project from an example dataset\n"
+            "  train      Train a model and export ONNX (uses Metal/MPS on macOS)\n"
+            "  compile    Compile an existing ONNX file (Linux/Windows only)\n"
+            "  run        Full pipeline: train then compile\n"
+            "  info       Show supported devices, models, and presets\n"
+            "  analyze    Analyse a project dataset (size, classes, sequence length)\n"
+            "  recommend  Recommend a model and FE preset from modelzoo examples\n"
+            "  about      Show copyright, credits, and version info\n"
+            "  help       Show detailed help for all subcommands\n\n"
             f"Detected training backend: {detected}\n\n"
             "Environment variables:\n"
             "  MMCLI_PYTHON      Python interpreter with tinyml_modelmaker installed\n"
@@ -918,6 +1075,8 @@ def main() -> None:
     _add_compile_parser(subparsers)
     _add_run_parser(subparsers)
     _add_info_parser(subparsers)
+    _add_analyze_parser(subparsers)
+    _add_recommend_parser(subparsers)
     _add_about_parser(subparsers)
     _add_help_parser(subparsers)
 
@@ -968,6 +1127,16 @@ def main() -> None:
     if args.command == "info":
         from mmcli.info import run_info
         run_info(args, _get_python_exe())
+        sys.exit(0)
+
+    if args.command == "analyze":
+        from mmcli.analyze import run_analyze
+        run_analyze(args)
+        sys.exit(0)
+
+    if args.command == "recommend":
+        from mmcli.recommend import run_recommend
+        run_recommend(args)
         sys.exit(0)
 
     _validate_args(args)
