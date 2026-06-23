@@ -24,10 +24,13 @@ create a project and start training with a single command.
 This means `tinyml_modelmaker` runs in your existing Python 3.10 environment with all
 its native dependencies (including MPS/Metal for macOS training).
 
-> **Note on compilation:** The TVM compiler backend (`ti_mcu_nnc`) currently ships
-> Linux and Windows wheels only. The `mmcli compile` and `mmcli run` subcommands will
-> work on Linux/Windows. On macOS you can use `mmcli train` to train with Metal/MPS,
-> then transfer the resulting `model.onnx` to a Linux machine for compilation.
+> **Note on compilation (macOS):** `mmcli compile` and `mmcli run` work on macOS
+> for C2000-family targets (F28P55, F28P65, etc.) when the TI C2000 CGT is installed
+> and `C2000_CG_ROOT` points to the installation directory (see
+> [Environment variables](#environment-variables) below).
+> On macOS ARM64, the process may exit with code 245 after the pipeline completes —
+> this is a known crash in the onnxsim C extension during Python shutdown and does
+> not affect output artifacts (`compilation/artifacts/mod.a` is written before it).
 
 ---
 
@@ -117,6 +120,63 @@ mmcli train -m timeseries -t arc_fault -d F28P55 -n CLS_1k_NPU -i ./my_arc_proje
 
 ---
 
+### `mmcli analyze` — inspect a dataset
+
+Analyse a project's `dataset/` directory and report sample counts, per-class
+distribution, minimum sequence length, and a size bucket
+(`tiny` / `small` / `medium` / `large`). Feed the bucket to `mmcli recommend`
+via `--dataset-size-bucket` to improve model selection accuracy.
+
+```
+mmcli analyze -i PROJECT_DIR
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--project` | `-i` | Project directory containing `dataset/` (or the dataset folder itself) **(required)** |
+
+**Example:**
+```bash
+mmcli analyze -i ./my_project
+# → reports class counts and emits: dataset size bucket: medium
+```
+
+---
+
+### `mmcli recommend` — pick a model from the modelzoo
+
+Score every tinyml-modelzoo example against your task, device, and optional
+dataset characteristics, then print a ranked shortlist of the best-matching
+models and feature-extraction presets.
+
+```
+mmcli recommend -t TASK -d DEVICE [options]
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--task` | `-t` | Task type **(required)** |
+| `--device` | `-d` | Target MCU device **(required)** |
+| `--module` | `-m` | AI module — auto-inferred from `--task` when omitted |
+| `--variables N` | | Sensor channel count — boosts score +2 for an exact match |
+| `--dataset-size-bucket` | | `tiny` / `small` / `medium` / `large` — output of `mmcli analyze` |
+| `--top N` | | Number of ranked matches to display (default: 5) |
+| `--modelzoo-path DIR` | | Explicit path to the tinyml-modelzoo repo root |
+
+Scoring: task (+1) · device (+1) · module (+1) · variables exact (+2) · size (+1) = max 6.
+
+**Examples:**
+```bash
+mmcli recommend -t motor_fault -d F28P55 --variables 3 --dataset-size-bucket small
+mmcli recommend -t arc_fault   -d F28P55 --top 10
+mmcli recommend -t generic_timeseries_forecasting -d MSPM0G5187
+```
+
+Use the recommended model name with `mmcli train -n <model>` and the feature
+extraction preset with `--feature-extraction <preset>`.
+
+---
+
 ### `mmcli train` — train only
 
 Train a model and export `model.onnx`. Compilation is skipped.
@@ -202,6 +262,114 @@ mmcli run \
   -i ./data/my_dataset \
   --quantization QUANTIZATION_TINPU
 ```
+
+---
+
+### `mmcli deploy` — flash a compiled model to hardware
+
+End-to-end device deployment in five subcommands. Run them in sequence after
+`mmcli run` (or `mmcli compile`) has produced `compilation/artifacts/mod.a`.
+
+#### `mmcli deploy check-sdk` — verify SDK installation
+
+```bash
+mmcli deploy check-sdk -d F28P55
+mmcli deploy check-sdk -d CC1312 --sdk-path ~/ti/simplelink_cc13xx_sdk_7.10.00
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d / --device` | Target MCU device **(required)** |
+| `--sdk-path PATH` | Explicit SDK root path (skips auto-detection) |
+
+#### `mmcli deploy artifacts` — locate compiled outputs
+
+Validates that the 4 files needed for CCS (`mod.a`, `tvmgen_default.h`,
+`test_vector.c`, `user_input_config.h`) all exist.
+
+```bash
+mmcli deploy artifacts -t motor_fault --run-id 20240115_143022 --model-id CLS_1k_NPU
+# Add --no-quantization for float model artifacts
+# Add --tinyml-base <PATH> if checkout is not at ~/tinyml-tensorlab
+```
+
+| Flag | Description |
+|------|-------------|
+| `-t / --task` | Task type **(required)** |
+| `--run-id RUN_ID` | Timestamp run directory name (e.g. `20240115_143022`) **(required)** |
+| `--model-id MODEL_ID` | Model name from training config (e.g. `CLS_1k_NPU`) **(required)** |
+| `--no-quantization` | Use base (float) golden vectors instead of quantized |
+| `--tinyml-base PATH` | tinyml-tensorlab root (default: `~/tinyml-tensorlab`) |
+
+#### `mmcli deploy create` — create CCS project
+
+```bash
+mmcli deploy create \
+  -d F28P55 -t motor_fault \
+  --run-id 20240115_143022 --model-id CLS_1k_NPU \
+  --project-name my_motor_fault_project
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d / --device` | Target MCU device **(required)** |
+| `-t / --task` | Task type **(required)** |
+| `--run-id RUN_ID` | Training run timestamp directory name **(required)** |
+| `--model-id MODEL_ID` | Model name from training artifacts **(required)** |
+| `--project-name NAME` | Name for the new CCS project folder **(required)** |
+| `--device-type CCS_TYPE` | CCS device type string — auto-resolved from `--device` when omitted |
+| `--sdk-path PATH` | Explicit SDK root path (overrides auto-detection) |
+| `--ccs-templates-path PATH` | Explicit AI examples directory (overrides `--sdk-path`) |
+| `--no-quantization` | Use base (float) golden vectors |
+| `--tinyml-base PATH` | tinyml-tensorlab root (default: `~/tinyml-tensorlab`) |
+
+CCS device type strings (auto-resolved from `--device`):
+
+| Device | CCS type |
+|--------|----------|
+| F28P55 | `f28p55x` |
+| F28P65 | `f28p65x` |
+| F28004 | `f28004x` |
+| MSPM0G3507 | `mspm0g3507` |
+| MSPM0G5187 | `mspm0g5187` |
+| AM263 | `am263` |
+| CC2755 | `cc2755` |
+| CC1312 | `cc1312` |
+| CC1314 | `cc1314` |
+| CC1352 | `cc1352` |
+
+#### `mmcli deploy build` — headless CCS build (requires CCS 12+)
+
+```bash
+mmcli deploy build \
+  --project-path /path/to/project \
+  --ccs-path /opt/ti/ccs1260
+```
+
+| Flag | Description |
+|------|-------------|
+| `--project-path PATH` | CCS project folder **(required)** |
+| `--ccs-path PATH` | CCS installation root **(required)** |
+| `--workspace PATH` | Eclipse workspace directory (default: `/tmp/ccs_ws_<pid>`) |
+| `--build-type` | `full` (default) or `incremental` |
+
+#### `mmcli deploy flash` — flash to device via dslite
+
+Connect the device via USB/JTAG before running this.
+
+```bash
+mmcli deploy flash \
+  --project-path /path/to/project \
+  --ccs-path /opt/ti/ccs1260
+```
+
+| Flag | Description |
+|------|-------------|
+| `--project-path PATH` | CCS project folder **(required)** |
+| `--ccs-path PATH` | CCS installation root **(required)** |
+| `--project-name NAME` | Project binary name (defaults to folder name) |
+| `--ccxml PATH` | Device `.ccxml` target config file (auto-searched if omitted) |
+| `--out-file PATH` | Explicit path to the `.out` binary (auto-searched if omitted) |
 
 ---
 
@@ -454,6 +622,7 @@ that has `tinyml_modelmaker`.
 | `MMCLI_PYTHON` | `python` or `python3` on PATH | Python interpreter with `tinyml_modelmaker` installed |
 | `MMCLI_MODELMAKER` | auto-detected | Path to tinyml-modelmaker source dir (only needed if auto-detection fails) |
 | `MMCLI_DATASETS` | bundled `example_datasets/` | Override directory containing example dataset zips |
+| `C2000_CG_ROOT` | `~/bin/ti-cgt-c2000_*` | Root of the TI C2000 CGT installation. Required for compilation of C2000 targets (F28P55, F28P65, etc.) on all platforms. Download from [TI's website](https://www.ti.com/tool/C2000-CGT). |
 
 ---
 

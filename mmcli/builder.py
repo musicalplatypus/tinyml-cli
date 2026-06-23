@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 # Mirrors constants.COMPILATION_DEFAULT in tinyml-modelmaker
 COMPILATION_DEFAULT_PRESET = "default_preset"
 
+# Maps mmcli quantization name → integer expected by run_tinyml_modelmaker.py
+# (mirrors TinyMLQuantizationVersion: NO_QUANTIZATION=0, QUANTIZATION_TINPU=2)
+_QUANTIZATION_INT: dict[str, int] = {
+    "NO_QUANTIZATION":    0,
+    "QUANTIZATION_TINPU": 2,
+}
+
 # Devices with a hardware NPU (mirrors compilation.py in agent-skills)
 _NPU_DEVICES = frozenset({
     "F28P55", "F28P65",       # C2000 with TI-NNPU
@@ -34,7 +41,7 @@ _SOFT_NPU_PREFERRED_TASKS = frozenset({
 
 
 def resolve_auto_preset(device: str | None, task: str | None,
-                        quantization: str | None) -> str:
+                        quantization: str | int | None) -> str:
     """Resolve '--preset auto' to a concrete compile_preset_name.
 
     Logic (mirrors agent-skills compilation.py):
@@ -42,12 +49,16 @@ def resolve_auto_preset(device: str | None, task: str | None,
       - NPU device + soft task    → forced_soft_npu_preset
       - NPU device + non-TI-quant → forced_soft_npu_preset
       - NPU device + TI-quant     → default_preset (NPU path)
+
+    Accepts quantization as a string name ("QUANTIZATION_TINPU") or integer (2).
     """
     if not device or device not in _NPU_DEVICES:
         return "default_preset"
     if task and task in _SOFT_NPU_PREFERRED_TASKS:
         return "forced_soft_npu_preset"
-    if quantization and quantization != "QUANTIZATION_TINPU":
+    # Normalise: "QUANTIZATION_TINPU" → 2
+    q = _QUANTIZATION_INT.get(quantization, quantization) if isinstance(quantization, str) else quantization
+    if q is not None and q != _QUANTIZATION_INT["QUANTIZATION_TINPU"]:
         return "forced_soft_npu_preset"
     return "default_preset"
 
@@ -172,7 +183,9 @@ def build_config(args) -> dict:
     _set(config, "training", "batch_size", getattr(args, "batch_size", None))
     _set(config, "training", "learning_rate", getattr(args, "lr", None))
     _set(config, "training", "num_gpus", getattr(args, "gpus", None))
-    _set(config, "training", "quantization", getattr(args, "quantization", None))
+    quant = getattr(args, "quantization", None)
+    _set(config, "training", "quantization",
+         _QUANTIZATION_INT.get(quant, quant) if isinstance(quant, str) else quant)
     _set(config, "training", "auto_quantization", getattr(args, "auto_quantization", None))
     _set(config, "training", "autoquant_tolerance_classification",
          getattr(args, "autoquant_tolerance_classification", None))

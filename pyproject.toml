@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mmcli"
-version = "1.0.0"
+version = "1.1.0"
 description = "Command-line interface for tinyml-modelmaker training and compilation"
 requires-python = ">=3.10"
 dependencies = [
@@ -24,4 +24,5 @@ mmcli = ["example_datasets/*.zip", "data/*.yaml"]
 [tool.pytest.ini_options]
 markers = [
     "cli: Tier 4 CLI integration tests",
+    "e2e: Full end-to-end pipeline tests (slow, requires MMCLI_PYTHON + TVM)",
 ]

@@ -22,10 +22,11 @@
 这意味着 `tinyml_modelmaker` 在您现有的 Python 3.10 环境中运行，包含所有
 原生依赖（包括 macOS 训练所需的 MPS/Metal）。
 
-> **关于编译：** TVM 编译器后端（`ti_mcu_nnc`）目前仅提供 Linux 和 Windows
-> 的 wheel 包。`mmcli compile` 和 `mmcli run` 子命令可在 Linux/Windows 上运行。
-> 在 macOS 上，您可以使用 `mmcli train` 通过 Metal/MPS 进行训练，
-> 然后将生成的 `model.onnx` 传输到 Linux 机器上进行编译。
+> **关于编译（macOS）：** 当安装了 TI C2000 CGT 且 `C2000_CG_ROOT` 指向其安装目录时，
+> `mmcli compile` 和 `mmcli run` 在 macOS 上可用于 C2000 系列目标设备（F28P55、F28P65 等）
+> （参见下方[环境变量](#环境变量)）。
+> 在 macOS ARM64 上，流水线完成后进程可能以代码 245 退出——这是 onnxsim C 扩展在 Python
+> 关闭期间发生的已知崩溃，不影响输出产物（`compilation/artifacts/mod.a` 在崩溃前已写入）。
 
 ---
 
@@ -115,6 +116,60 @@ mmcli train -m timeseries -t arc_fault -d F28P55 -n CLS_1k_NPU -i ./my_arc_proje
 
 ---
 
+### `mmcli analyze` — 分析数据集
+
+分析项目的 `dataset/` 目录，报告样本数量、各类别分布、最小序列长度以及数据集大小桶
+（`tiny` / `small` / `medium` / `large`）。将大小桶通过 `--dataset-size-bucket`
+传给 `mmcli recommend` 可提高模型选择准确性。
+
+```
+mmcli analyze -i PROJECT_DIR
+```
+
+| 参数 | 缩写 | 说明 |
+|------|------|------|
+| `--project` | `-i` | 包含 `dataset/` 的项目目录（也可直接指向数据集文件夹）**（必填）** |
+
+**示例：**
+```bash
+mmcli analyze -i ./my_project
+# → 报告各类别数量并输出：dataset size bucket: medium
+```
+
+---
+
+### `mmcli recommend` — 从模型库中选择模型
+
+根据任务、设备及可选的数据集特征，对每个 tinyml-modelzoo 示例进行评分，
+输出最匹配的模型和特征提取预设排名列表。
+
+```
+mmcli recommend -t TASK -d DEVICE [选项]
+```
+
+| 参数 | 缩写 | 说明 |
+|------|------|------|
+| `--task` | `-t` | 任务类型 **（必填）** |
+| `--device` | `-d` | 目标 MCU 设备 **（必填）** |
+| `--module` | `-m` | AI 模块——省略时从 `--task` 自动推断 |
+| `--variables N` | | 传感器通道数——精确匹配时评分 +2 |
+| `--dataset-size-bucket` | | `tiny` / `small` / `medium` / `large`——来自 `mmcli analyze` 的输出 |
+| `--top N` | | 显示的排名数量（默认：5） |
+| `--modelzoo-path DIR` | | tinyml-modelzoo 仓库根目录的显式路径 |
+
+评分规则：任务(+1) · 设备(+1) · 模块(+1) · 变量数精确匹配(+2) · 大小(+1) = 最高 6 分。
+
+**示例：**
+```bash
+mmcli recommend -t motor_fault -d F28P55 --variables 3 --dataset-size-bucket small
+mmcli recommend -t arc_fault   -d F28P55 --top 10
+mmcli recommend -t generic_timeseries_forecasting -d MSPM0G5187
+```
+
+使用推荐的模型名称 `mmcli train -n <model>`，特征提取预设使用 `--feature-extraction <preset>`。
+
+---
+
 ### `mmcli train` — 仅训练
 
 训练模型并导出 `model.onnx`，跳过编译步骤。
@@ -200,6 +255,114 @@ mmcli run \
   -i ./data/my_dataset \
   --quantization QUANTIZATION_TINPU
 ```
+
+---
+
+### `mmcli deploy` — 将编译后的模型烧录到硬件
+
+通过五个子命令完成端到端设备部署。在 `mmcli run`（或 `mmcli compile`）生成
+`compilation/artifacts/mod.a` 后，按顺序执行以下步骤。
+
+#### `mmcli deploy check-sdk` — 验证 SDK 安装
+
+```bash
+mmcli deploy check-sdk -d F28P55
+mmcli deploy check-sdk -d CC1312 --sdk-path ~/ti/simplelink_cc13xx_sdk_7.10.00
+```
+
+| 参数 | 说明 |
+|------|------|
+| `-d / --device` | 目标 MCU 设备 **（必填）** |
+| `--sdk-path PATH` | 显式 SDK 根路径（跳过自动检测） |
+
+#### `mmcli deploy artifacts` — 定位编译输出文件
+
+验证 CCS 所需的 4 个文件（`mod.a`、`tvmgen_default.h`、`test_vector.c`、
+`user_input_config.h`）均已存在。
+
+```bash
+mmcli deploy artifacts -t motor_fault --run-id 20240115_143022 --model-id CLS_1k_NPU
+# 添加 --no-quantization 使用浮点模型产物
+# 如果代码库不在 ~/tinyml-tensorlab，添加 --tinyml-base <PATH>
+```
+
+| 参数 | 说明 |
+|------|------|
+| `-t / --task` | 任务类型 **（必填）** |
+| `--run-id RUN_ID` | 时间戳运行目录名（如 `20240115_143022`）**（必填）** |
+| `--model-id MODEL_ID` | 训练配置中的模型名称（如 `CLS_1k_NPU`）**（必填）** |
+| `--no-quantization` | 使用基础（浮点）黄金向量 |
+| `--tinyml-base PATH` | tinyml-tensorlab 根目录（默认：`~/tinyml-tensorlab`） |
+
+#### `mmcli deploy create` — 创建 CCS 项目
+
+```bash
+mmcli deploy create \
+  -d F28P55 -t motor_fault \
+  --run-id 20240115_143022 --model-id CLS_1k_NPU \
+  --project-name my_motor_fault_project
+```
+
+| 参数 | 说明 |
+|------|------|
+| `-d / --device` | 目标 MCU 设备 **（必填）** |
+| `-t / --task` | 任务类型 **（必填）** |
+| `--run-id RUN_ID` | 训练运行时间戳目录名 **（必填）** |
+| `--model-id MODEL_ID` | 训练产物中的模型名称 **（必填）** |
+| `--project-name NAME` | 新 CCS 项目文件夹名称 **（必填）** |
+| `--device-type CCS_TYPE` | CCS 设备类型字符串——省略时从 `--device` 自动解析 |
+| `--sdk-path PATH` | 显式 SDK 根路径（覆盖自动检测） |
+| `--ccs-templates-path PATH` | 显式 AI 示例目录（覆盖 `--sdk-path`） |
+| `--no-quantization` | 使用基础（浮点）黄金向量 |
+| `--tinyml-base PATH` | tinyml-tensorlab 根目录（默认：`~/tinyml-tensorlab`） |
+
+CCS 设备类型字符串（从 `--device` 自动解析）：
+
+| 设备 | CCS 类型 |
+|------|---------|
+| F28P55 | `f28p55x` |
+| F28P65 | `f28p65x` |
+| F28004 | `f28004x` |
+| MSPM0G3507 | `mspm0g3507` |
+| MSPM0G5187 | `mspm0g5187` |
+| AM263 | `am263` |
+| CC2755 | `cc2755` |
+| CC1312 | `cc1312` |
+| CC1314 | `cc1314` |
+| CC1352 | `cc1352` |
+
+#### `mmcli deploy build` — 无界面 CCS 构建（需要 CCS 12+）
+
+```bash
+mmcli deploy build \
+  --project-path /path/to/project \
+  --ccs-path /opt/ti/ccs1260
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--project-path PATH` | CCS 项目文件夹 **（必填）** |
+| `--ccs-path PATH` | CCS 安装根目录 **（必填）** |
+| `--workspace PATH` | Eclipse 工作区目录（默认：`/tmp/ccs_ws_<pid>`） |
+| `--build-type` | `full`（默认）或 `incremental` |
+
+#### `mmcli deploy flash` — 通过 dslite 烧录到设备
+
+运行前请通过 USB/JTAG 连接设备。
+
+```bash
+mmcli deploy flash \
+  --project-path /path/to/project \
+  --ccs-path /opt/ti/ccs1260
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--project-path PATH` | CCS 项目文件夹 **（必填）** |
+| `--ccs-path PATH` | CCS 安装根目录 **（必填）** |
+| `--project-name NAME` | 项目二进制名称（默认为文件夹名） |
+| `--ccxml PATH` | 设备 `.ccxml` 目标配置文件（省略时自动搜索） |
+| `--out-file PATH` | `.out` 二进制文件的显式路径（省略时自动搜索） |
 
 ---
 
@@ -442,6 +605,7 @@ powershell build_windows.ps1     # → dist/mmcli.exe
 | `MMCLI_PYTHON` | PATH 中的 `python` 或 `python3` | 安装了 `tinyml_modelmaker` 的 Python 解释器 |
 | `MMCLI_MODELMAKER` | 自动检测 | tinyml-modelmaker 源代码目录路径（仅在自动检测失败时需要） |
 | `MMCLI_DATASETS` | 内置 `example_datasets/` | 覆盖包含示例数据集 zip 文件的目录 |
+| `C2000_CG_ROOT` | `~/bin/ti-cgt-c2000_*` | TI C2000 CGT 安装根目录。所有平台上编译 C2000 目标设备（F28P55、F28P65 等）时必须设置。从 [TI 官网](https://www.ti.com/tool/C2000-CGT) 下载。 |
 
 ---
 

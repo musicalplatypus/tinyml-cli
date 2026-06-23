@@ -23,10 +23,6 @@ TASK_TYPES = [
     ("timeseries", "generic_timeseries_classification"),
     ("timeseries", "generic_timeseries_regression"),
     ("timeseries", "generic_timeseries_forecasting"),
-]
-
-# Task types not yet in mmcli TASK_DESCRIPTIONS (tested separately)
-UNSUPPORTED_INFO_TASKS = [
     ("timeseries", "generic_timeseries_anomalydetection"),
 ]
 
@@ -84,20 +80,11 @@ class TestInfoCommand:
             f"Info output doesn't list devices: {output[:200]}"
         )
 
-    @pytest.mark.parametrize("module,task_type", UNSUPPORTED_INFO_TASKS)
-    @pytest.mark.xfail(reason="Task type not yet registered in mmcli TASK_DESCRIPTIONS")
-    def test_info_unsupported_task(self, module, task_type):
-        """Anomaly detection not yet registered — expected to fail."""
-        rc, stdout, stderr = _run_cli(
-            "info", "-m", module, "-t", task_type, "-d", "F28P55"
-        )
-        assert rc == 0, f"mmcli info failed: {stdout + stderr}"
-
 
 class TestDryRun:
     """Verify mmcli --dry-run train generates valid YAML configs."""
 
-    @pytest.mark.parametrize("module,task_type", TASK_TYPES + UNSUPPORTED_INFO_TASKS)
+    @pytest.mark.parametrize("module,task_type", TASK_TYPES)
     def test_dry_run_generates_config(self, module, task_type, tmp_path):
         """--dry-run train should print the YAML config without running."""
         # Pick a minimal model name based on task type

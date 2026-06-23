@@ -9,6 +9,7 @@ Subcommands:
   info       Show supported devices, models, and feature extraction presets
   analyze    Analyse a project dataset (size, classes, sequence length)
   recommend  Recommend a model and FE preset from tinyml-modelzoo examples
+  deploy     Deploy compiled artifacts to target hardware (check-sdk/artifacts/create/build/flash)
   help       Show detailed help for all subcommands
 
 Runtime requirements (not bundled in the binary):
@@ -816,6 +817,117 @@ def _add_recommend_parser(subparsers) -> None:
     )
 
 
+def _add_deploy_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "deploy",
+        help="Deploy compiled model to target hardware.",
+        description=(
+            "Device deployment workflow — 5 subcommands:\n\n"
+            "  check-sdk   Verify SDK installation for a target device\n"
+            "  artifacts   Locate compiled ModelMaker outputs\n"
+            "  create      Create CCS project from SDK template + artifacts\n"
+            "  build       Headless CCS build (requires CCS 12+)\n"
+            "  flash       Flash compiled .out to device via dslite"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = p.add_subparsers(dest="deploy_subcommand", metavar="DEPLOY_SUBCOMMAND")
+    sub.required = True
+
+    # ── check-sdk ──────────────────────────────────────────────────────────
+    sdk_p = sub.add_parser(
+        "check-sdk",
+        help="Verify that the device-specific SDK is installed.",
+        description="Locate and validate the SDK required for a target device.",
+    )
+    sdk_p.add_argument("-d", "--device", required=True, choices=TARGET_DEVICES,
+                       help="Target MCU device (e.g. F28P55).")
+    sdk_p.add_argument("--sdk-path", dest="sdk_path", default=None, metavar="PATH",
+                       help="Explicit path to SDK root (skips auto-detection).")
+
+    # ── artifacts ─────────────────────────────────────────────────────────
+    art_p = sub.add_parser(
+        "artifacts",
+        help="Locate compiled ModelMaker outputs for a training run.",
+        description=(
+            "Validate that all 4 files needed for CCS project creation exist:\n"
+            "  mod.a, tvmgen_default.h, test_vector.c, user_input_config.h"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    art_p.add_argument("-t", "--task", required=True, metavar="TASK_TYPE",
+                       help="Task type string (e.g. motor_fault).")
+    art_p.add_argument("--run-id", dest="run_id", required=True, metavar="RUN_ID",
+                       help="Timestamp run directory name (e.g. 20240115_143022).")
+    art_p.add_argument("--model-id", dest="model_id", required=True, metavar="MODEL_ID",
+                       help="Model name from training config (e.g. CLS_1k_NPU).")
+    art_p.add_argument("--no-quantization", dest="no_quantization", action="store_true",
+                       default=False, help="Use base (float) golden vectors instead of quantized.")
+    art_p.add_argument("--tinyml-base", dest="tinyml_base", default=None, metavar="PATH",
+                       help="tinyml-tensorlab root (default: ~/tinyml-tensorlab).")
+
+    # ── create ─────────────────────────────────────────────────────────────
+    crt_p = sub.add_parser(
+        "create",
+        help="Create a CCS project from SDK template with compiled artifacts.",
+    )
+    crt_p.add_argument("-d", "--device", required=True, choices=TARGET_DEVICES,
+                       help="Target MCU device.")
+    crt_p.add_argument("-t", "--task", required=True, metavar="TASK_TYPE",
+                       help="Task type string (e.g. motor_fault).")
+    crt_p.add_argument("--run-id", dest="run_id", required=True, metavar="RUN_ID",
+                       help="Training run timestamp directory name.")
+    crt_p.add_argument("--model-id", dest="model_id", required=True, metavar="MODEL_ID",
+                       help="Model name from training artifacts.")
+    crt_p.add_argument("--project-name", dest="project_name", required=True, metavar="NAME",
+                       help="Name for the new CCS project folder.")
+    crt_p.add_argument("--device-type", dest="device_type", default=None, metavar="CCS_TYPE",
+                       help=(
+                           "CCS device_type string (e.g. f28p55x). "
+                           "Auto-resolved from --device when omitted."
+                       ))
+    crt_p.add_argument("--no-quantization", dest="no_quantization", action="store_true",
+                       default=False, help="Use base (float) golden vectors.")
+    crt_p.add_argument("--tinyml-base", dest="tinyml_base", default=None, metavar="PATH",
+                       help="tinyml-tensorlab root (default: ~/tinyml-tensorlab).")
+    crt_p.add_argument("--sdk-path", dest="sdk_path", default=None, metavar="PATH",
+                       help="Explicit SDK root path (overrides auto-detection).")
+    crt_p.add_argument("--ccs-templates-path", dest="ccs_templates_path", default=None,
+                       metavar="PATH",
+                       help="Explicit AI examples directory (overrides sdk_path + auto-detect).")
+
+    # ── build ──────────────────────────────────────────────────────────────
+    bld_p = sub.add_parser(
+        "build",
+        help="Headless CCS build of a CCS project (requires CCS 12+).",
+    )
+    bld_p.add_argument("--project-path", dest="project_path", required=True, metavar="PATH",
+                       help="Absolute path to the CCS project folder.")
+    bld_p.add_argument("--ccs-path", dest="ccs_path", required=True, metavar="PATH",
+                       help="CCS installation root (e.g. /opt/ti/ccs1260).")
+    bld_p.add_argument("--workspace", default=None, metavar="PATH",
+                       help="Eclipse workspace directory (default: /tmp/ccs_ws_<pid>).")
+    bld_p.add_argument("--build-type", dest="build_type", choices=["full", "incremental"],
+                       default="full", help="Build type (default: full).")
+
+    # ── flash ──────────────────────────────────────────────────────────────
+    fls_p = sub.add_parser(
+        "flash",
+        help="Flash compiled .out to target device via dslite.",
+        description="Connect the device via USB/JTAG before running this.",
+    )
+    fls_p.add_argument("--project-path", dest="project_path", required=True, metavar="PATH",
+                       help="Absolute path to the CCS project folder.")
+    fls_p.add_argument("--ccs-path", dest="ccs_path", required=True, metavar="PATH",
+                       help="CCS installation root.")
+    fls_p.add_argument("--project-name", dest="project_name", default=None, metavar="NAME",
+                       help="Project binary name (defaults to folder name).")
+    fls_p.add_argument("--ccxml", default=None, metavar="PATH",
+                       help="Path to the device .ccxml target config (auto-searched if omitted).")
+    fls_p.add_argument("--out-file", dest="out_file", default=None, metavar="PATH",
+                       help="Explicit path to the .out binary (auto-searched if omitted).")
+
+
 def _add_about_parser(subparsers) -> None:
     subparsers.add_parser(
         "about",
@@ -1084,6 +1196,7 @@ def main() -> None:
     _add_info_parser(subparsers)
     _add_analyze_parser(subparsers)
     _add_recommend_parser(subparsers)
+    _add_deploy_parser(subparsers)
     _add_about_parser(subparsers)
     _add_help_parser(subparsers)
 
@@ -1144,6 +1257,23 @@ def main() -> None:
     if args.command == "recommend":
         from mmcli.recommend import run_recommend
         run_recommend(args)
+        sys.exit(0)
+
+    if args.command == "deploy":
+        from mmcli.deploy import (
+            run_deploy_check_sdk, run_deploy_artifacts,
+            run_deploy_create, run_deploy_build, run_deploy_flash,
+        )
+        _deploy_handlers = {
+            "check-sdk": run_deploy_check_sdk,
+            "artifacts": run_deploy_artifacts,
+            "create":    run_deploy_create,
+            "build":     run_deploy_build,
+            "flash":     run_deploy_flash,
+        }
+        handler = _deploy_handlers.get(args.deploy_subcommand)
+        if handler:
+            handler(args)
         sys.exit(0)
 
     _validate_args(args)
