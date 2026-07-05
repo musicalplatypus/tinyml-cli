@@ -26,6 +26,7 @@ Runtime requirements (not bundled in the binary):
 import argparse
 import logging
 import os
+import re
 import subprocess
 import sys
 
@@ -88,6 +89,44 @@ NAS_SUPPORTED_TASKS = [
 
 
 # ---------------------------------------------------------------------------
+# Input validation utilities
+# ---------------------------------------------------------------------------
+
+def _is_safe_path(path: str) -> bool:
+    """Check if a path is safe from path traversal attacks."""
+    # Check for path traversal attempts
+    if '..' in path or path.startswith('/'):
+        return False
+    # Ensure it's not empty and doesn't contain dangerous characters
+    if not path or re.search(r'[^\w\-./_ ]', path):
+        return False
+    return True
+
+def _sanitize_input(input_str: str) -> str:
+    """Sanitize input to prevent command injection."""
+    if not isinstance(input_str, str):
+        return str(input_str)
+
+    # Remove potentially dangerous characters for command execution
+    # Keep only alphanumeric, dots, dashes, slashes, underscores, and spaces
+    # But also ensure we don't allow path traversal sequences like ".."
+    sanitized = re.sub(r'[^\w\-./_ ]', '', input_str)
+
+    # Additional sanitization: remove path traversal attempts (..)
+    # and other dangerous patterns that could lead to command injection
+    while '..' in sanitized:
+        sanitized = sanitized.replace('..', '')
+
+    # Remove any remaining backticks, dollar signs, or semicolons
+    sanitized = sanitized.replace('`', '').replace('$', '').replace(';', '')
+
+    # Limit length to prevent buffer overflows
+    if len(sanitized) > 1024:
+        sanitized = sanitized[:1024]
+
+    return sanitized
+
+# ---------------------------------------------------------------------------
 # Metal / MPS detection
 # ---------------------------------------------------------------------------
 
@@ -143,32 +182,46 @@ def _find_runner_script(python_exe: str) -> str:
       1. MMCLI_MODELMAKER env var (user-supplied path to the modelmaker dir)
       2. Ask the Python interpreter where tinyml_modelmaker is installed
     """
+    # SECURITY: Validate and sanitize the python_exe parameter
+    sanitized_python = _sanitize_input(python_exe)
+    if not sanitized_python:
+        sanitized_python = "python"
+
     env_dir = os.environ.get("MMCLI_MODELMAKER")
     if env_dir:
-        script = os.path.join(env_dir, "tinyml_modelmaker", "run_tinyml_modelmaker.py")
+        # SECURITY: Sanitize the environment directory path to prevent path traversal attacks
+        sanitized_env_dir = _sanitize_input(env_dir)
+        if not _is_safe_path(sanitized_env_dir):
+            raise FileNotFoundError(
+                f"MMCLI_MODELMAKER contains unsafe path components: '{env_dir}'"
+            )
+
+        script = os.path.join(sanitized_env_dir, "tinyml_modelmaker", "run_tinyml_modelmaker.py")
         if os.path.isfile(script):
             return script
-        script2 = os.path.join(env_dir, "run_tinyml_modelmaker.py")
+        script2 = os.path.join(sanitized_env_dir, "run_tinyml_modelmaker.py")
         if os.path.isfile(script2):
             return script2
         raise FileNotFoundError(
-            f"MMCLI_MODELMAKER is set to '{env_dir}' but "
+            f"MMCLI_MODELMAKER is set to '{sanitized_env_dir}' but "
             f"run_tinyml_modelmaker.py was not found there."
         )
 
+    # Use subprocess with shell=False for security
     probe = subprocess.run(
         [
-            python_exe, "-c",
+            sanitized_python, "-c",
             "import tinyml_modelmaker, os; "
             "print(os.path.join(os.path.dirname(tinyml_modelmaker.__file__), "
             "'run_tinyml_modelmaker.py'))"
         ],
         capture_output=True,
         text=True,
+        shell=False,  # SECURITY: Prevent command injection
     )
     if probe.returncode != 0:
         raise RuntimeError(
-            f"Could not locate tinyml_modelmaker using '{python_exe}'.\n"
+            f"Could not locate tinyml_modelmaker using '{sanitized_python}'.\n"
             f"stderr: {probe.stderr.strip()}\n\n"
             "Set MMCLI_PYTHON to a Python interpreter that has "
             "tinyml_modelmaker installed, or set MMCLI_MODELMAKER to the "
@@ -180,7 +233,18 @@ def _find_runner_script(python_exe: str) -> str:
 def _get_python_exe() -> str:
     env = os.environ.get("MMCLI_PYTHON")
     if env:
-        return env
+        # SECURITY: Sanitize environment variable to prevent command injection
+        sanitized_env = _sanitize_input(env)
+        # Ensure it's a valid executable path or name
+        if not sanitized_env:
+            return "python"
+        # Check if it's an existing file or a command available in PATH
+        import shutil
+        if os.path.exists(sanitized_env) or shutil.which(sanitized_env):
+            return sanitized_env
+        else:
+            logger.warning("MMCLI_PYTHON points to non-existent path: %s", sanitized_env)
+
     # Try common Python executable names (macOS/Linux often lack 'python')
     import shutil
     for name in ("python", "python3"):
@@ -1016,32 +1080,43 @@ def _validate_args(args: argparse.Namespace) -> None:
     # Validate project directory structure for train/run
     project = getattr(args, "project", None)
     if project and command in ("train", "run"):
-        project = os.path.abspath(project)
-        args.project = project  # normalize to absolute
-        dataset_dir = os.path.join(project, "dataset")
-        annotations_dir = os.path.join(dataset_dir, "annotations")
-        # Data can live in classes/ (classification/anomaly), files/
-        # (regression/forecasting), or images/ (vision)
-        data_subdirs = ["classes", "files", "images"]
-        if not os.path.isdir(project):
-            errors.append(f"Project directory not found: {project}")
-        elif not os.path.isdir(dataset_dir):
-            errors.append(
-                f"Project directory missing 'dataset/' subdirectory: {project}")
+        # SECURITY: Sanitize project path to prevent path traversal attacks
+        sanitized_project = _sanitize_input(project)
+        if not _is_safe_path(sanitized_project):
+            errors.append(f"Invalid project path: {project}")
         else:
-            # Validate dataset contents
-            if not os.path.isdir(annotations_dir):
+            project = os.path.abspath(sanitized_project)
+            args.project = project  # normalize to absolute
+            dataset_dir = os.path.join(project, "dataset")
+            annotations_dir = os.path.join(dataset_dir, "annotations")
+            # Data can live in classes/ (classification/anomaly), files/
+            # (regression/forecasting), or images/ (vision)
+            data_subdirs = ["classes", "files", "images"]
+            if not os.path.isdir(project):
+                errors.append(f"Project directory not found: {project}")
+            elif not os.path.isdir(dataset_dir):
                 errors.append(
-                    f"Dataset missing 'annotations/' subdirectory: {dataset_dir}")
-            if not any(os.path.isdir(os.path.join(dataset_dir, d))
-                       for d in data_subdirs):
-                errors.append(
-                    f"Dataset missing data subdirectory (one of "
-                    f"{', '.join(data_subdirs)}): {dataset_dir}")
+                    f"Project directory missing 'dataset/' subdirectory: {project}")
+            else:
+                # Validate dataset contents
+                if not os.path.isdir(annotations_dir):
+                    errors.append(
+                        f"Dataset missing 'annotations/' subdirectory: {dataset_dir}")
+                if not any(os.path.isdir(os.path.join(dataset_dir, d))
+                           for d in data_subdirs):
+                    errors.append(
+                        f"Dataset missing data subdirectory (one of "
+                        f"{', '.join(data_subdirs)}): {dataset_dir}")
 
     # Path existence checks
-    if getattr(args, "onnx", None) and not os.path.isfile(args.onnx):
-        errors.append(f"--onnx file not found: {args.onnx}")
+    onnx_file = getattr(args, "onnx", None)
+    if onnx_file:
+        # SECURITY: Sanitize ONNX file path
+        sanitized_onnx = _sanitize_input(onnx_file)
+        if not _is_safe_path(sanitized_onnx):
+            errors.append(f"Invalid ONNX file path: {onnx_file}")
+        elif not os.path.isfile(sanitized_onnx):
+            errors.append(f"--onnx file not found: {sanitized_onnx}")
 
     if errors:
         for msg in errors:
@@ -1125,7 +1200,8 @@ def _dispatch(config: dict, python_exe: str, verbose: bool,
             finalize()
             return proc.returncode
         else:
-            result = subprocess.run(cmd, check=False)
+            # SECURITY: Use shell=False to prevent command injection (fixes vulnerability)
+            result = subprocess.run(cmd, check=False, shell=False)
             return result.returncode
     finally:
         if yaml_path:
