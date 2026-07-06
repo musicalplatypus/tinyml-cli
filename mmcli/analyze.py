@@ -29,10 +29,15 @@ def _bin_dataset(n: int) -> str:
 
 
 def _find_data_files(directory: str) -> list[str]:
+    """Find data files in directory, case-insensitively."""
     exts = (".csv", ".txt", ".npy", ".pkl")
     files = []
     for ext in exts:
-        files.extend(glob.glob(os.path.join(directory, f"*{ext}")))
+        # Use glob with both upper and lower case variants
+        pattern_lower = os.path.join(directory, f"*{ext}")
+        pattern_upper = os.path.join(directory, f"*{ext.upper()}")
+        files.extend(glob.glob(pattern_lower))
+        files.extend(glob.glob(pattern_upper))
     return sorted(files)
 
 
