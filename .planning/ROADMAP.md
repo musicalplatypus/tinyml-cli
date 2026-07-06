@@ -2,7 +2,7 @@
 
 ## v1.0 Milestone — Core Functionality & Security (in progress)
 
-**Phases:** 1-2
+**Phases:** 1-5
 
 ### Phase 1: Foundation & Core Functionality
 **Goal:** Build core CLI structure with basic commands and security hardening.
@@ -21,19 +21,23 @@
 - [x] `analyze` command - Analyze project dataset contents
 - [x] `recommend` command - Recommend models and FE presets  
 - [x] `deploy` command - Handle deployment operations
-- [ ] Security testing for all new features (REQ-TESTS-07)
-- [ ] Documentation updates with security best practices
+- [x] Security testing for all new features (REQ-TESTS-07)
+- [x] Documentation updates with security best practices
 
 ### Phase 3: Testing and Documentation
 **Goal:** Comprehensive testing and documentation for the mmcli tool.
 
 **Depends on:** Phase 2
 
+**Plans:** 6 plans (4 testing fixes/coverage, 1 doc)
+
 **Tasks:**
-- [ ] Unit tests for all components ( REQ-TESTS-07, REQ-TESTS-08, REQ-TESTS-10)
-- [ ] Integration tests for full pipelines
-- [ ] End-to-end testing with example datasets
-- [ ] Comprehensive documentation
+- [ ] Fix integration test failures (REQ-TESTS-07)
+- [ ] Fix E2E temp directory issues
+- [ ] Unit tests for builder and datasets modules (REQ-TESTS-08)
+- [ ] Full workflow integration tests
+- [ ] Cross-platform compatibility tests
+- [ ] API documentation generation (REQ-TESTS-10)
 
 Plans:
 - [x] 02-01-PLAN.md — Unit tests for info command (TDD)
@@ -42,3 +46,53 @@ Plans:
 - [x] 02-04-PLAN.md — Unit tests for deploy command (TDD)
 - [x] 02-05-PLAN.md — Document environment variables in CLI help
 - [x] 02-06-PLAN.md — Config file examples documentation
+- [x] 03-01-PLAN.md — Fix integration test failures
+- [x] 03-02-PLAN.md — Fix E2E temp directory issues
+- [x] 03-03-PLAN.md — Unit tests for builder, datasets modules
+- [x] 03-04-PLAN.md — Full workflow integration tests
+- [x] 03-05-PLAN.md — Cross-platform compatibility tests
+- [x] 03-06-PLAN.md — API documentation generation
+
+### Phase 4: Security Enhancements
+**Goal:** Enhanced security testing, documentation, and input validation.
+
+**Depends on:** Phase 3
+
+**Plans:** 5 plans (2 tdd/fix, 1 sec, 1 doc)
+
+**Tasks:**
+- [ ] Fuzz testing framework using hypothesis (REQ-SEC-01)
+- [ ] Attack surface mapping and verification tests
+- [ ] Security documentation (SECURITY.md, threat model) (REQ-SEC-02)
+- [ ] Improved input validation with length limits
+- [ ] Dependency vulnerability scanning integration
+
+Plans:
+- [x] 04-01-PLAN.md — Fuzz testing framework using hypothesis
+- [x] 04-02-PLAN.md — Attack surface mapping & tests
+- [x] 04-03-PLAN.md — Security documentation (SECURITY.md, threat model)
+- [x] 04-04-PLAN.md — Improved input validation with length limits
+- [x] 04-05-PLAN.md — Dependency vulnerability scanning integration
+
+### Phase 5: New Features & UX
+**Goal:** Enhanced user experience and new features.
+
+**Depends on:** Phase 4
+
+**Plans:** 6 plans (all feat)
+
+**Tasks:**
+- [ ] Progress visualization for long-running operations (tqdm)
+- [ ] Export formats (CSV, JSON, YAML) with -o flag
+- [ ] Model comparison command (--compare)
+- [ ] Batch processing for multiple projects/directories
+- [ ] Troubleshooting assistant (diagnose command)
+- [ ] Interactive shell mode (shell subcommand)
+
+Plans:
+- [x] 05-01-PLAN.md — Progress visualization (tqdm integration)
+- [x] 05-02-PLAN.md — Export formats (CSV, JSON, YAML)
+- [x] 05-03-PLAN.md — Model comparison command
+- [x] 05-04-PLAN.md — Batch processing capabilities
+- [x] 05-05-PLAN.md — Troubleshooting assistant (diagnose)
+- [x] 05-06-PLAN.md — Interactive shell mode

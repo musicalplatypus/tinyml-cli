@@ -59,7 +59,7 @@ class TestInfoCommand:
     """Verify mmcli info returns valid output for each task type."""
 
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
-    def test_info_lists_models(self, module, task_type):
+    def test_info_lists_models(self, module, task_type, mock_tinyml_modelmaker_registry):
         """info command should list available models for each task."""
         rc, stdout, stderr = _run_cli(
             "info", "-m", module, "-t", task_type, "-d", "F28P55"
@@ -71,7 +71,7 @@ class TestInfoCommand:
         )
 
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
-    def test_info_lists_devices(self, module, task_type):
+    def test_info_lists_devices(self, module, task_type, mock_tinyml_modelmaker_registry):
         """info command should list supported devices."""
         rc, stdout, stderr = _run_cli("info", "-m", module, "-t", task_type)
         output = stdout + stderr
@@ -85,7 +85,7 @@ class TestDryRun:
     """Verify mmcli --dry-run train generates valid YAML configs."""
 
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
-    def test_dry_run_generates_config(self, module, task_type, tmp_path):
+    def test_dry_run_generates_config(self, module, task_type, tmp_path, mock_tinyml_modelmaker_registry):
         """--dry-run train should print the YAML config without running."""
         # Pick a minimal model name based on task type
         model_names = {

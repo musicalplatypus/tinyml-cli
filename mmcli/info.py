@@ -109,6 +109,9 @@ def _build_query_script(module: str, task_type: str | None,
     )
 
 
+QUERY_REGISTRY = None  # For test injection
+
+
 def _run_query(python_exe: str, script: str) -> dict:
     """Run *script* via *python_exe* and return parsed JSON."""
     result = subprocess.run(

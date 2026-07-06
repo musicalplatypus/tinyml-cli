@@ -151,3 +151,42 @@ def baseline_performance():
         'expected_memory_mb': 100.0,
         'expected_execution_time': 10.0
     }
+
+
+# ---------------------------------------------------------------------------
+# Mock fixtures for external dependencies
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_tinyml_modelmaker():
+    """Mock the tinyml_modelmaker registry query."""
+    with mock.patch("mmcli.info._run_query") as mock_run_query:
+        mock_run_query.return_value = {
+            "module": "timeseries",
+            "task_descriptions": {
+                "generic_timeseries_classification": {
+                    "task_name": "Generic Timeseries Classification",
+                    "target_devices": ["F28P55", "MSPM0G3507"]
+                },
+                "generic_timeseries_regression": {
+                    "task_name": "Generic Timeseries Regression",
+                    "target_devices": ["F28P55", "MSPM0G3507"]
+                },
+                "generic_timeseries_forecasting": {
+                    "task_name": "Generic Timeseries Forecasting",
+                    "target_devices": ["F28P55"]
+                },
+                "generic_timeseries_anomalydetection": {
+                    "task_name": "Generic Timeseries Anomaly Detection",
+                    "target_devices": ["F28P55", "MSPM0G3507", "AM263"]
+                }
+            },
+            "models": {
+                "CLS_1k_NPU": {"devices": ["F28P55"]},
+                "REGR_1k": {"devices": ["F28P55"]},
+                "FCST_LSTM8": {"devices": ["F28P55"]},
+                "AD_1k": {"devices": ["F28P55"]}
+            },
+            "fe_presets": ["FE_DEFAULT", "FE_LOW_POWER"],
+        }
+        yield mock_run_query

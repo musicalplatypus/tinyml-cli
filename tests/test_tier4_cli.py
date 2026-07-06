@@ -74,7 +74,7 @@ class TestInfoDeviceFiltering:
     """Verify mmcli info --device filters to device-specific models."""
 
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
-    def test_device_filter_returns_valid_models(self, module, task_type):
+    def test_device_filter_returns_valid_models(self, module, task_type, mock_tinyml_modelmaker_registry):
         """info with --device should list only models for that device."""
         rc, stdout, stderr = _run_cli(
             "info", "-m", module, "-t", task_type, "-d", "F28P55"
@@ -87,7 +87,7 @@ class TestInfoDeviceFiltering:
         )
 
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
-    def test_different_devices_give_different_results(self, module, task_type):
+    def test_different_devices_give_different_results(self, module, task_type, mock_tinyml_modelmaker_registry):
         """Different devices may have different model sets."""
         rc1, out1, err1 = _run_cli(
             "info", "-m", module, "-t", task_type, "-d", "F28P55"
@@ -102,7 +102,7 @@ class TestInfoDeviceFiltering:
         assert "F28P55" in (out1 + err1)
         assert "MSPM0G3507" in (out2 + err2)
 
-    def test_info_without_device_shows_all_devices(self):
+    def test_info_without_device_shows_all_devices(self, mock_tinyml_modelmaker_registry):
         """info without --device should list all supported devices."""
         rc, stdout, stderr = _run_cli(
             "info", "-m", "timeseries", "-t", "generic_timeseries_classification"
@@ -111,7 +111,7 @@ class TestInfoDeviceFiltering:
         assert rc == 0
         assert "Supported Devices" in output or "devices" in output.lower()
 
-    def test_info_without_task_lists_all_tasks(self):
+    def test_info_without_task_lists_all_tasks(self, mock_tinyml_modelmaker_registry):
         """info with only -m should list all available tasks."""
         rc, stdout, stderr = _run_cli(
             "info", "-m", "timeseries"
@@ -131,7 +131,7 @@ class TestInfoFeaturePresets:
     """Verify mmcli info lists feature extraction presets for each task."""
 
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
-    def test_info_lists_fe_presets(self, module, task_type):
+    def test_info_lists_fe_presets(self, module, task_type, mock_tinyml_modelmaker_registry):
         """info should list feature extraction presets."""
         rc, stdout, stderr = _run_cli(
             "info", "-m", module, "-t", task_type
@@ -309,7 +309,7 @@ class TestDryRunCrossDevice:
 
     @pytest.mark.parametrize("device", REPRESENTATIVE_DEVICES)
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
-    def test_dry_run_valid_config(self, module, task_type, device, tmp_path):
+    def test_dry_run_valid_config(self, module, task_type, device, tmp_path, mock_tinyml_modelmaker_registry):
         """--dry-run should generate valid YAML for each task × device combo."""
         model = self.MODEL_NAMES.get(task_type, "CLS_1k_NPU")
 
