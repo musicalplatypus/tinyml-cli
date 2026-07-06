@@ -13,14 +13,21 @@ Subcommands:
   help       Show detailed help for all subcommands
 
 Runtime requirements (not bundled in the binary):
-  MMCLI_PYTHON  Path to the Python interpreter that has tinyml_modelmaker
-                installed, e.g. /path/to/venv/bin/python
-                Defaults to 'python' or 'python3' found on PATH.
+  MMCLI_PYTHON      Path to the Python interpreter that has tinyml_modelmaker
+                    installed, e.g. /path/to/venv/bin/python
+                    Default: 'python' or 'python3' found on PATH
 
   MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory
-                    (the folder containing tinyml_modelmaker/).
+                    (the folder containing tinyml_modelmaker/)
                     Defaults to the directory of run_tinyml_modelmaker.py
-                    resolved from the tinyml_modelmaker package itself.
+                    resolved from the tinyml_modelmaker package itself
+
+  MMCLI_DATASETS    Override built-in datasets directory for 'mmcli init'
+                    Default: built-in dataset directory
+
+  MMCLI_MODELZOO_PATH  Path to the tinyml-modelzoo repo root
+                       Used by 'mmcli recommend' for example scoring
+                       Auto-detected if not set
 """
 
 import argparse
@@ -1242,7 +1249,9 @@ def main() -> None:
             "  MMCLI_PYTHON      Python interpreter with tinyml_modelmaker installed\n"
             "                    Default: 'python' or 'python3' on PATH\n"
             "  MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory\n"
-            "                    (auto-detected if MMCLI_PYTHON is set correctly)\n\n"
+            "                    (auto-detected if MMCLI_PYTHON is set correctly)\n"
+            "  MMCLI_DATASETS    Override built-in datasets directory for 'mmcli init'\n"
+            "  MMCLI_MODELZOO_PATH  Path to the tinyml-modelzoo repo root for 'mmcli recommend'\n\n"
             "Run 'mmcli help' to see all subcommands and options at once.\n"
             "Run 'mmcli <subcommand> --help' for subcommand-specific help."
         ),
