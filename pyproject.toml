@@ -9,6 +9,7 @@ description = "Command-line interface for tinyml-modelmaker training and compila
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0",
+    "tqdm>=4.0",
 ]
 
 [project.scripts]
