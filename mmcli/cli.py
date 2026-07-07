@@ -152,11 +152,13 @@ def _is_safe_path(path: str) -> bool:
     except Exception:
         pass
 
-    # Allow relative paths without deep traversal patterns
+    # Disallow any path component that starts with . to prevent traversal
     parts = normalized_forward.split('/')
     for part in parts:
         if part == '..':
-            continue  # Single .. is okay, just means parent directory
+            return False  # .. is always a traversal attempt
+        if part == '.':
+            continue  # Current directory reference is safe
         # Check for excessive dots (could be malicious pattern)
         if len(part) > 2 and part.startswith('..'):
             return False
