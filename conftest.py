@@ -6,7 +6,21 @@ import pytest
 import tempfile
 import os
 from pathlib import Path
-import psutil
+# Optional: psutil for performance monitoring; provide fallback if unavailable
+try:
+    import psutil
+except ImportError:  # pragma: no cover
+    class _DummyProcess:
+        def __init__(self, pid):
+            pass
+        def cpu_percent(self):
+            return 0.0
+        @property
+        def memory_info(self):
+            class _Mem:
+                rss = 0
+            return _Mem()
+    psutil = type('psutil', (), {'Process': _DummyProcess})
 import time
 from unittest import mock
 

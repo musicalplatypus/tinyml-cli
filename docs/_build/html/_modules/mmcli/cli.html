@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mmcli.cli &#8212; mmcli  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=686e5160" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for mmcli.cli</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">mmcli — command-line interface for tinyml-modelmaker.</span>
+
+<span class="sd">Subcommands:</span>
+<span class="sd">  init       Create a new project from an example dataset</span>
+<span class="sd">  train      Train a model and export ONNX (no compilation)</span>
+<span class="sd">  compile    Compile an existing ONNX file (no training)</span>
+<span class="sd">  run        Full pipeline: train then compile</span>
+<span class="sd">  info       Show supported devices, models, and feature extraction presets</span>
+<span class="sd">  analyze    Analyse a project dataset (size, classes, sequence length)</span>
+<span class="sd">  recommend  Recommend a model and FE preset from tinyml-modelzoo examples</span>
+<span class="sd">  deploy     Deploy compiled artifacts to target hardware (check-sdk/artifacts/create/build/flash)</span>
+<span class="sd">  help       Show detailed help for all subcommands</span>
+
+<span class="sd">Runtime requirements (not bundled in the binary):</span>
+<span class="sd">  MMCLI_PYTHON      Path to the Python interpreter that has tinyml_modelmaker</span>
+<span class="sd">                    installed, e.g. /path/to/venv/bin/python</span>
+<span class="sd">                    Default: &#39;python&#39; or &#39;python3&#39; found on PATH</span>
+
+<span class="sd">  MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory</span>
+<span class="sd">                    (the folder containing tinyml_modelmaker/)</span>
+<span class="sd">                    Defaults to the directory of run_tinyml_modelmaker.py</span>
+<span class="sd">                    resolved from the tinyml_modelmaker package itself</span>
+
+<span class="sd">  MMCLI_DATASETS    Override built-in datasets directory for &#39;mmcli init&#39;</span>
+<span class="sd">                    Default: built-in dataset directory</span>
+
+<span class="sd">  MMCLI_MODELZOO_PATH  Path to the tinyml-modelzoo repo root</span>
+<span class="sd">                       Used by &#39;mmcli recommend&#39; for example scoring</span>
+<span class="sd">                       Auto-detected if not set</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">mmcli</span><span class="w"> </span><span class="kn">import</span> <span class="n">__version__</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.builder</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_config</span><span class="p">,</span> <span class="n">write_temp_yaml</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Known enumerations (for --help text)</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="n">MODULES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;timeseries&quot;</span><span class="p">,</span> <span class="s2">&quot;vision&quot;</span><span class="p">,</span> <span class="s2">&quot;audio&quot;</span><span class="p">]</span>
+
+<span class="n">TASK_TYPES_TIMESERIES</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;generic_timeseries_classification&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;generic_timeseries_regression&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;generic_timeseries_anomalydetection&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;generic_timeseries_forecasting&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;arc_fault&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;ecg_classification&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;motor_fault&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;blower_imbalance&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pir_detection&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="n">TASK_TYPES_VISION</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;image_classification&quot;</span><span class="p">]</span>
+
+<span class="n">TARGET_DEVICES</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># C2000</span>
+    <span class="s2">&quot;F280013&quot;</span><span class="p">,</span> <span class="s2">&quot;F280015&quot;</span><span class="p">,</span> <span class="s2">&quot;F28003&quot;</span><span class="p">,</span> <span class="s2">&quot;F28004&quot;</span><span class="p">,</span> <span class="s2">&quot;F2837&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;F28P55&quot;</span><span class="p">,</span> <span class="s2">&quot;F28P65&quot;</span><span class="p">,</span> <span class="s2">&quot;F29H85&quot;</span><span class="p">,</span> <span class="s2">&quot;F29P58&quot;</span><span class="p">,</span> <span class="s2">&quot;F29P32&quot;</span><span class="p">,</span>
+    <span class="c1"># MSPM0</span>
+    <span class="s2">&quot;MSPM0G3507&quot;</span><span class="p">,</span> <span class="s2">&quot;MSPM0G3519&quot;</span><span class="p">,</span> <span class="s2">&quot;MSPM0G5187&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;MSPM33C32&quot;</span><span class="p">,</span> <span class="s2">&quot;MSPM33C34&quot;</span><span class="p">,</span>
+    <span class="c1"># SimpleLink</span>
+    <span class="s2">&quot;CC1312&quot;</span><span class="p">,</span> <span class="s2">&quot;CC1314&quot;</span><span class="p">,</span> <span class="s2">&quot;CC1352&quot;</span><span class="p">,</span> <span class="s2">&quot;CC1354&quot;</span><span class="p">,</span> <span class="s2">&quot;CC2755&quot;</span><span class="p">,</span> <span class="s2">&quot;CC35X1&quot;</span><span class="p">,</span>
+    <span class="c1"># Sitara</span>
+    <span class="s2">&quot;AM263&quot;</span><span class="p">,</span> <span class="s2">&quot;AM263P&quot;</span><span class="p">,</span> <span class="s2">&quot;AM261&quot;</span><span class="p">,</span> <span class="s2">&quot;AM13E2&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="n">QUANTIZATION_OPTIONS</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;NO_QUANTIZATION&quot;</span><span class="p">,</span> <span class="s2">&quot;QUANTIZATION_TINPU&quot;</span><span class="p">]</span>
+
+<span class="n">TRAINING_DEVICES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;mps&quot;</span><span class="p">,</span> <span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="s2">&quot;cpu&quot;</span><span class="p">]</span>
+
+<span class="n">NAS_SIZES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;s&quot;</span><span class="p">,</span> <span class="s2">&quot;m&quot;</span><span class="p">,</span> <span class="s2">&quot;l&quot;</span><span class="p">,</span> <span class="s2">&quot;xl&quot;</span><span class="p">]</span>
+
+<span class="n">NAS_OPTIMIZE_MODES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Memory&quot;</span><span class="p">,</span> <span class="s2">&quot;Compute&quot;</span><span class="p">]</span>
+
+<span class="c1"># Task types that support NAS (classification only)</span>
+<span class="n">NAS_SUPPORTED_TASKS</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;generic_timeseries_classification&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;arc_fault&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;ecg_classification&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;motor_fault&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;blower_imbalance&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pir_detection&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;image_classification&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Input validation utilities</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_safe_path</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check if a path is safe from path traversal attacks.&quot;&quot;&quot;</span>
+    <span class="c1"># Check for path traversal attempts - must NOT start with &#39;..&#39; or contain &#39;/..&#39;</span>
+    <span class="k">if</span> <span class="n">path</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;..&#39;</span><span class="p">)</span> <span class="ow">or</span> <span class="s1">&#39;/..&#39;</span> <span class="ow">in</span> <span class="n">path</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="c1"># Ensure it&#39;s not empty and doesn&#39;t contain dangerous characters</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span> <span class="ow">or</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;[^\w\-./_ ]&#39;</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">return</span> <span class="kc">True</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_sanitize_input</span><span class="p">(</span><span class="n">input_str</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sanitize input to prevent command injection.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">input_str</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">input_str</span><span class="p">)</span>
+
+    <span class="c1"># Remove potentially dangerous characters for command execution</span>
+    <span class="c1"># Keep only alphanumeric, dots, dashes, slashes, underscores, and spaces</span>
+    <span class="c1"># But also ensure we don&#39;t allow path traversal sequences like &quot;..&quot;</span>
+    <span class="n">sanitized</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;[^\w\-./_ ]&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">input_str</span><span class="p">)</span>
+
+    <span class="c1"># Additional sanitization: remove path traversal attempts (..)</span>
+    <span class="c1"># and other dangerous patterns that could lead to command injection</span>
+    <span class="k">while</span> <span class="s1">&#39;..&#39;</span> <span class="ow">in</span> <span class="n">sanitized</span><span class="p">:</span>
+        <span class="n">sanitized</span> <span class="o">=</span> <span class="n">sanitized</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;..&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Remove any remaining backticks, dollar signs, or semicolons</span>
+    <span class="n">sanitized</span> <span class="o">=</span> <span class="n">sanitized</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;`&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;$&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;;&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Limit length to prevent buffer overflows</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sanitized</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1024</span><span class="p">:</span>
+        <span class="n">sanitized</span> <span class="o">=</span> <span class="n">sanitized</span><span class="p">[:</span><span class="mi">1024</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">sanitized</span>
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Metal / MPS detection</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_detect_training_device</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return the best available training device on this machine.</span>
+<span class="sd">    Preference order: MPS (Apple Metal) &gt; CUDA &gt; CPU.</span>
+
+<span class="sd">    Uses platform heuristics so that torch does NOT need to be importable</span>
+<span class="sd">    in the CLI binary itself (torch lives in the external MMCLI_PYTHON env).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">platform</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">_sp</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">sys</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">_sys</span>
+
+    <span class="n">system</span> <span class="o">=</span> <span class="n">platform</span><span class="o">.</span><span class="n">system</span><span class="p">()</span>
+
+    <span class="c1"># Fast macOS heuristic: MPS is available on Apple Silicon or Intel Macs</span>
+    <span class="c1"># with macOS 12.3+ and a GPU.  Check via system_profiler if available.</span>
+    <span class="k">if</span> <span class="n">system</span> <span class="o">==</span> <span class="s2">&quot;Darwin&quot;</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">out</span> <span class="o">=</span> <span class="n">_sp</span><span class="o">.</span><span class="n">check_output</span><span class="p">(</span>
+                <span class="p">[</span><span class="s2">&quot;system_profiler&quot;</span><span class="p">,</span> <span class="s2">&quot;SPDisplaysDataType&quot;</span><span class="p">],</span>
+                <span class="n">stderr</span><span class="o">=</span><span class="n">_sp</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="s2">&quot;Metal&quot;</span> <span class="ow">in</span> <span class="n">out</span> <span class="ow">or</span> <span class="s2">&quot;Apple&quot;</span> <span class="ow">in</span> <span class="n">out</span><span class="p">:</span>
+                <span class="k">return</span> <span class="s2">&quot;mps&quot;</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">pass</span>
+        <span class="c1"># Fallback: any macOS likely has Metal</span>
+        <span class="k">return</span> <span class="s2">&quot;mps&quot;</span>
+
+    <span class="c1"># On Linux/Windows check for CUDA via nvidia-smi</span>
+    <span class="k">if</span> <span class="n">system</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;Linux&quot;</span><span class="p">,</span> <span class="s2">&quot;Windows&quot;</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">_sp</span><span class="o">.</span><span class="n">check_output</span><span class="p">([</span><span class="s2">&quot;nvidia-smi&quot;</span><span class="p">],</span> <span class="n">stderr</span><span class="o">=</span><span class="n">_sp</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+            <span class="k">return</span> <span class="s2">&quot;cuda&quot;</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">pass</span>
+
+    <span class="k">return</span> <span class="s2">&quot;cpu&quot;</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Locate the run_tinyml_modelmaker.py entry point</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_find_runner_script</span><span class="p">(</span><span class="n">python_exe</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return the path to run_tinyml_modelmaker.py.</span>
+
+<span class="sd">    Search order:</span>
+<span class="sd">      1. MMCLI_MODELMAKER env var (user-supplied path to the modelmaker dir)</span>
+<span class="sd">      2. Ask the Python interpreter where tinyml_modelmaker is installed</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># SECURITY: Validate and sanitize the python_exe parameter</span>
+    <span class="n">sanitized_python</span> <span class="o">=</span> <span class="n">_sanitize_input</span><span class="p">(</span><span class="n">python_exe</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">sanitized_python</span><span class="p">:</span>
+        <span class="n">sanitized_python</span> <span class="o">=</span> <span class="s2">&quot;python&quot;</span>
+
+    <span class="n">env_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MMCLI_MODELMAKER&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">env_dir</span><span class="p">:</span>
+        <span class="c1"># SECURITY: Sanitize the environment directory path to prevent path traversal attacks</span>
+        <span class="n">sanitized_env_dir</span> <span class="o">=</span> <span class="n">_sanitize_input</span><span class="p">(</span><span class="n">env_dir</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">_is_safe_path</span><span class="p">(</span><span class="n">sanitized_env_dir</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;MMCLI_MODELMAKER contains unsafe path components: &#39;</span><span class="si">{</span><span class="n">env_dir</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+            <span class="p">)</span>
+
+        <span class="n">script</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">sanitized_env_dir</span><span class="p">,</span> <span class="s2">&quot;tinyml_modelmaker&quot;</span><span class="p">,</span> <span class="s2">&quot;run_tinyml_modelmaker.py&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">script</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">script</span>
+        <span class="n">script2</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">sanitized_env_dir</span><span class="p">,</span> <span class="s2">&quot;run_tinyml_modelmaker.py&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">script2</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">script2</span>
+        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;MMCLI_MODELMAKER is set to &#39;</span><span class="si">{</span><span class="n">sanitized_env_dir</span><span class="si">}</span><span class="s2">&#39; but &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;run_tinyml_modelmaker.py was not found there.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Use subprocess with shell=False for security</span>
+    <span class="n">probe</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">sanitized_python</span><span class="p">,</span> <span class="s2">&quot;-c&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;import tinyml_modelmaker, os; &quot;</span>
+            <span class="s2">&quot;print(os.path.join(os.path.dirname(tinyml_modelmaker.__file__), &quot;</span>
+            <span class="s2">&quot;&#39;run_tinyml_modelmaker.py&#39;))&quot;</span>
+        <span class="p">],</span>
+        <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">shell</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># SECURITY: Prevent command injection</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">probe</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Could not locate tinyml_modelmaker using &#39;</span><span class="si">{</span><span class="n">sanitized_python</span><span class="si">}</span><span class="s2">&#39;.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;stderr: </span><span class="si">{</span><span class="n">probe</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Set MMCLI_PYTHON to a Python interpreter that has &quot;</span>
+            <span class="s2">&quot;tinyml_modelmaker installed, or set MMCLI_MODELMAKER to the &quot;</span>
+            <span class="s2">&quot;tinyml-modelmaker source directory.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">probe</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_python_exe</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MMCLI_PYTHON&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">env</span><span class="p">:</span>
+        <span class="c1"># SECURITY: Sanitize environment variable to prevent command injection</span>
+        <span class="n">sanitized_env</span> <span class="o">=</span> <span class="n">_sanitize_input</span><span class="p">(</span><span class="n">env</span><span class="p">)</span>
+        <span class="c1"># Ensure it&#39;s a valid executable path or name</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">sanitized_env</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;python&quot;</span>
+        <span class="c1"># Check if it&#39;s an existing file or a command available in PATH</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">sanitized_env</span><span class="p">)</span> <span class="ow">or</span> <span class="n">shutil</span><span class="o">.</span><span class="n">which</span><span class="p">(</span><span class="n">sanitized_env</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">sanitized_env</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;MMCLI_PYTHON points to non-existent path: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">sanitized_env</span><span class="p">)</span>
+
+    <span class="c1"># Try common Python executable names (macOS/Linux often lack &#39;python&#39;)</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;python&quot;</span><span class="p">,</span> <span class="s2">&quot;python3&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">shutil</span><span class="o">.</span><span class="n">which</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">name</span>
+    <span class="k">return</span> <span class="s2">&quot;python&quot;</span>  <span class="c1"># fallback, will produce a clear error</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Shared argument groups</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_common_args</span><span class="p">(</span><span class="n">parser</span><span class="p">:</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># These are logically required but marked optional here so that</span>
+    <span class="c1"># --config &lt;file&gt; can supply them without repeating on the CLI.</span>
+    <span class="c1"># Validated post-parse in _validate_args().</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-m&quot;</span><span class="p">,</span> <span class="s2">&quot;--module&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">MODULES</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODULE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;AI module to use.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  timeseries  Time-series classification, regression, etc.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  vision      Image classification</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  audio       Audio / speech classification</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Required unless provided via --config.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-t&quot;</span><span class="p">,</span> <span class="s2">&quot;--task&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;TASK_TYPE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Task type (required unless provided via --config).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Timeseries tasks:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  generic_timeseries_classification</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  generic_timeseries_regression</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  generic_timeseries_anomalydetection</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  generic_timeseries_forecasting</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  arc_fault  ecg_classification  motor_fault</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  blower_imbalance  pir_detection</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Vision tasks:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  image_classification&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-d&quot;</span><span class="p">,</span> <span class="s2">&quot;--device&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;DEVICE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Target microcontroller device (required unless provided via --config).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;C2000:     F280013  F280015  F28003  F28004  F2837</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;           F28P55  F28P65  F29H85  F29P58  F29P32</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;MSPM0:     MSPM0G3507  MSPM0G3519  MSPM0G5187</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;           MSPM33C32  MSPM33C34</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;SimpleLink: CC1312  CC1314  CC1352  CC1354  CC2755  CC35X1</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Sitara:    AM263  AM263P  AM261  AM13E2&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-n&quot;</span><span class="p">,</span> <span class="s2">&quot;--model&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODEL_NAME&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Model name from the catalog (required unless provided via --config).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Classification:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  NPU:   CLS_100_NPU  CLS_500_NPU  CLS_1k_NPU  CLS_2k_NPU</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;         CLS_4k_NPU  CLS_6k_NPU  CLS_8k_NPU  CLS_13k_NPU</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;         CLS_20k_NPU  CLS_55k_NPU  ECG_55k_NPU</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  Res:   CLS_ResAdd_3k  CLS_ResCat_3k</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  App:   ArcFault_model_{200,300,700,1400}_t</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;         MotorFault_model_{1,2,3}_t</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;         FanImbalance_model_{1,2,3}_t  PIRDetection_model_1_t</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Regression:     REGR_{1k,2k,3k,4k,10k,13k}</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;                REGR_{500,2k,6k,8k,20k}_NPU</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Anomaly:        AD_{1k,4k,16k,17k}  AD_Linear</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;                AD_{500,2k,6k,8k,10k,20k}_NPU</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Forecasting:    FCST_{3k,13k}  FCST_LSTM{8,10}</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;                FCST_{500,1k,2k,4k,6k,8k,10k,20k}_NPU</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Vision:         Lenet5&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-c&quot;</span><span class="p">,</span> <span class="s2">&quot;--config&quot;</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;YAML_FILE&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Optional base YAML config file.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;CLI arguments override values from this file.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;When provided, all other flags become optional.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--run-name&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;run_name&quot;</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;NAME&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Name for the output run folder.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Supports {date-time} and </span><span class="si">{model_name}</span><span class="s2"> placeholders.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Default: &#39;{date-time}/</span><span class="si">{model_name}</span><span class="s2">&#39;&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="c1"># Note: --output removed; projects_path is now derived from the -i/--project path.</span>
+    <span class="c1"># The project directory IS the project_path, and its parent is projects_path.</span>
+
+    <span class="c1"># Report generation</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--report&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Generate a live-updating HTML training report with</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;accuracy/loss charts and confusion matrix.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Output: &lt;project_dir&gt;/run/report.html&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_training_args</span><span class="p">(</span><span class="n">parser</span><span class="p">:</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">detected</span> <span class="o">=</span> <span class="n">_detect_training_device</span><span class="p">()</span>
+    <span class="n">group</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s2">&quot;training options&quot;</span><span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-i&quot;</span><span class="p">,</span> <span class="s2">&quot;--project&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;data&quot;</span><span class="p">,</span> <span class="s2">&quot;projects&quot;</span><span class="p">,</span> <span class="s2">&quot;default&quot;</span><span class="p">),</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PROJECT_DIR&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Path to project directory (must contain dataset/).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Default: ./data/projects/default&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--feature-extraction&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;feature_extraction&quot;</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PRESET&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Feature extraction preset name. Default: &#39;default&#39;.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Examples:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  Generic_1024Input_FFTBIN_64Feature_8Frame</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  Generic_512Input_FFTBIN_32Feature_8Frame</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  Generic_512Input_RAW_512Feature_1Frame</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  Generic_256Input_RAW_256Feature_1Frame&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--epochs&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;N&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Number of training epochs.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--batch-size&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;batch_size&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;N&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Training batch size.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--lr&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;RATE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Learning rate.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--training-device&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;training_device&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="n">detected</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">TRAINING_DEVICES</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;BACKEND&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Training backend to use.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  auto  Let tinyml_modelmaker detect</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mps   Apple Metal (macOS)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  cuda  NVIDIA GPU</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  cpu   CPU only</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Default (detected): </span><span class="si">{</span><span class="n">detected</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--gpus&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;N&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Number of GPUs / accelerators to use.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  0  CPU only</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  1  Single GPU or Apple Metal (MPS) — default</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot; &gt;1  Multi-GPU distributed training (CUDA only)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;When set to 1 on macOS, Metal (MPS) is used automatically</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;if available via --training-device auto.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--quantization&quot;</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">QUANTIZATION_OPTIONS</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;METHOD&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Quantization method.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  NO_QUANTIZATION    Float model (default)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  QUANTIZATION_TINPU Quantize for TI NPU target&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">aq</span> <span class="o">=</span> <span class="n">group</span><span class="o">.</span><span class="n">add_mutually_exclusive_group</span><span class="p">()</span>
+    <span class="n">aq</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--auto-quantization&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;auto_quantization&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Enable auto-quantization: binary-search for the lowest bitwidth</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;that keeps accuracy within the tolerance threshold (default: on).&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">aq</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--no-auto-quantization&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;auto_quantization&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_false&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Disable auto-quantization and use fixed 8-bit quantization.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--autoquant-tolerance-classification&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;autoquant_tolerance_classification&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;FRAC&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Max accuracy drop tolerated by auto-quantization (default: 0.05 = 5</span><span class="si">%%</span><span class="s2">).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--autoquant-tolerance-regression&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;autoquant_tolerance_regression&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;FRAC&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Max R² drop tolerated by auto-quantization (default: 0.05 = 5</span><span class="si">%%</span><span class="s2">).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--autoquant-tolerance-forecasting&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;autoquant_tolerance_forecasting&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MULT&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Max SMAPE increase tolerated (default: 2.0 = 3× float baseline).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--autoquant-tolerance-anomaly&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;autoquant_tolerance_anomaly&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MULT&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Max MSE increase tolerated for anomaly detection (default: 2.0).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Performance optimization flags (advanced)</span>
+    <span class="n">perf</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s2">&quot;performance options (advanced)&quot;</span><span class="p">)</span>
+    <span class="n">perf</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--compile-model&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;compile_model&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;0|1&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Enable torch.compile for optimized training.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  0  Disabled (default)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  1  Enable (CUDA: inductor backend, MPS: aot_eager)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Best results on CUDA with inductor. May add overhead on MPS.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">amp_group</span> <span class="o">=</span> <span class="n">perf</span><span class="o">.</span><span class="n">add_mutually_exclusive_group</span><span class="p">()</span>
+    <span class="n">amp_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--native-amp&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;native_amp&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Enable PyTorch native mixed precision (torch.amp.autocast).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Reduces memory and may improve throughput.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Auto-enabled on MPS (Apple Silicon).&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">amp_group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--no-native-amp&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;native_amp&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_false&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Disable native mixed precision (overrides MPS auto-enable).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Neural Architecture Search (NAS)</span>
+    <span class="n">nas</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span>
+        <span class="s2">&quot;neural architecture search (NAS)&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Automatically discover an optimal model architecture instead of</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;using a predefined model from the catalog. When --nas is used,</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;--model/-n is optional (a synthetic name is generated).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;NAS is supported for classification tasks only.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">nas</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--nas&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;nas_size&quot;</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">NAS_SIZES</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;SIZE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Enable NAS with a model size preset.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  s   Small  — fast search, compact model</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  m   Medium — balanced search</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  l   Large  — deeper search, larger model</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  xl  XL     — extensive search, largest model</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;When set, --model/-n becomes optional.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;For timeseries tasks you must also set --feature-extraction.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">nas</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--nas-epochs&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;nas_epochs&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;N&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Number of NAS search epochs (default: 10).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">nas</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--nas-optimize&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;nas_optimize&quot;</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">NAS_OPTIMIZE_MODES</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Resource optimization target for NAS.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  Memory   Prefer fewer parameters (default)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  Compute  Prefer fewer MACs (lower latency)&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_compilation_args</span><span class="p">(</span><span class="n">parser</span><span class="p">:</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">group</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s2">&quot;compilation options&quot;</span><span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-o&quot;</span><span class="p">,</span> <span class="s2">&quot;--onnx&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;ONNX_FILE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Path to an existing ONNX model file to compile.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Required for &#39;compile&#39; subcommand unless provided via --config.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Not needed for &#39;run&#39; (uses the model produced by training).&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--preset&quot;</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PRESET_NAME&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Compilation preset name. Options:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  default_preset           Best available path (NPU if device supports it)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  forced_soft_npu_preset   Force CPU path (recommended for anomaly/forecasting)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  compress_npu_layer_data  NPU path with compressed weights (tight SRAM)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  auto                     Pick the best preset for this device and task</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Default: &#39;default_preset&#39;.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Subcommand parsers</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_train_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;train&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Train a model and export ONNX. Compilation is skipped.&quot;</span><span class="p">,</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Train a model using the tinyml-modelmaker pipeline.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Outputs model.onnx in the project run directory.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;On macOS, Apple Metal (MPS) is used automatically when available.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Example:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli train -m timeseries -t generic_timeseries_classification </span><span class="se">\\\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;              -d F28P55 -n CLS_1k_NPU -i ./my_project</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  # Use default project (./data/projects/default):</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli train -m timeseries -t generic_timeseries_classification </span><span class="se">\\\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;              -d F28P55 -n CLS_1k_NPU</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  # Force CPU:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli train ... --training-device cpu</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  # Explicit Metal:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli train ... --training-device mps&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">_add_common_args</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+    <span class="n">_add_training_args</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_compile_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;compile&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Compile an existing ONNX file. Training is skipped.&quot;</span><span class="p">,</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Compile a pre-trained ONNX model for a target microcontroller.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;No training data or training step is required.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Note: compilation requires ti_mcu_nnc (Linux/Windows only).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;On macOS: train here, then compile on Linux.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Example:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli compile -m timeseries -t generic_timeseries_classification </span><span class="se">\\\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;                -d F28P55 -n CLS_1k_NPU </span><span class="se">\\\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;                -o ./data/projects/my_run/model.onnx&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">_add_common_args</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+    <span class="n">_add_compilation_args</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_run_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;run&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Full pipeline: train then compile.&quot;</span><span class="p">,</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Run the full tinyml-modelmaker pipeline:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  1. Train the model (using Metal/MPS on macOS if available)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  2. Export model.onnx</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  3. Compile for the target device</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Note: compilation requires ti_mcu_nnc (Linux/Windows only).</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Example:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli run -m timeseries -t generic_timeseries_classification </span><span class="se">\\\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;            -d F28P55 -n CLS_1k_NPU -i ./my_project&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">_add_common_args</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+    <span class="n">_add_training_args</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+    <span class="n">_add_compilation_args</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_info_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;info&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Show supported devices, models, and feature extraction presets.&quot;</span><span class="p">,</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Query the model registry and display available options.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Examples:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli info -m timeseries                        # list task types</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli info -m timeseries -t arc_fault           # details for arc_fault</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli info -m timeseries -t arc_fault -d F28P55 # models for F28P55&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-m&quot;</span><span class="p">,</span> <span class="s2">&quot;--module&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">MODULES</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODULE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;AI module (timeseries, vision, or audio).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-t&quot;</span><span class="p">,</span> <span class="s2">&quot;--task&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;TASK_TYPE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Task type to show details for. Omit to list all task types.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-d&quot;</span><span class="p">,</span> <span class="s2">&quot;--device&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;DEVICE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Target device to filter models.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_init_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;init&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Create a new project from an example dataset.&quot;</span><span class="p">,</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Initialise a new project directory from a bundled example</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;dataset.  The dataset zip is extracted into the project so</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;it is ready for &#39;mmcli train&#39;.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Example:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli init -t arc_fault --dataset arc_fault_sample </span><span class="se">\\\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;             -p ./my_arc_project</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;List available datasets:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli init --list</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mmcli init --list -m timeseries</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Set MMCLI_DATASETS to override the built-in datasets directory.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--list&quot;</span><span class="p">,</span> <span class="s2">&quot;-l&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;List available example datasets and exit.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-t&quot;</span><span class="p">,</span> <span class="s2">&quot;--task&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;TASK_TYPE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Task type for the new project (required for extraction).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Also used as a filter with --list.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-p&quot;</span><span class="p">,</span> <span class="s2">&quot;--project&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PROJECT_DIR&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Path for the new project directory (must not already exist).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--dataset&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;DATASET_NAME&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Name of the example dataset to use.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Use &#39;mmcli init --list&#39; to see available datasets.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-m&quot;</span><span class="p">,</span> <span class="s2">&quot;--module&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">MODULES</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODULE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;AI module (auto-detected from dataset if omitted).</span><span class="se">\n</span><span class="s2">&quot;</span>
+             <span class="s2">&quot;Also used as a filter with --list.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_analyze_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;analyze&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Analyse a project dataset (size, classes, sequence length).&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Inspect a project&#39;s dataset/ directory and report:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  - Total sample count and per-class distribution</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  - Minimum sequence length</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  - Dataset size bucket (tiny/small/medium/large)</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;The &#39;size bucket&#39; output can be passed directly to &#39;mmcli recommend&#39;</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;via --dataset-size-bucket to improve model selection accuracy.&quot;</span>
+        <span class="p">),</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-i&quot;</span><span class="p">,</span> <span class="s2">&quot;--project&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;DIR&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Project directory containing dataset/. &quot;</span>
+            <span class="s2">&quot;May also point directly at the dataset folder.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_recommend_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;recommend&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Recommend a model and FE preset from tinyml-modelzoo examples.&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Score every tinyml-modelzoo example against your task, device,</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;and (optionally) variable count and dataset size, then print a</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;ranked shortlist of the best-matching models and feature extraction</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;presets.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Modelzoo path resolution (in order):</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  1. --modelzoo-path argument</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  2. MMCLI_MODELZOO_PATH env var (set to repo root)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  3. Auto-detected sibling of the installed tinyml_modelmaker package</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  4. Common default paths (~/tinyml-tensorlab/tinyml-modelzoo, etc.)&quot;</span>
+        <span class="p">),</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">req</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s2">&quot;required&quot;</span><span class="p">)</span>
+    <span class="n">req</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-t&quot;</span><span class="p">,</span> <span class="s2">&quot;--task&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;TASK_TYPE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Task type (e.g. arc_fault, generic_timeseries_classification).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">req</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-d&quot;</span><span class="p">,</span> <span class="s2">&quot;--device&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;DEVICE&quot;</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">TARGET_DEVICES</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Target MCU device (see &#39;mmcli info&#39; for the full list).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">opt</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">add_argument_group</span><span class="p">(</span><span class="s2">&quot;optional&quot;</span><span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;-m&quot;</span><span class="p">,</span> <span class="s2">&quot;--module&quot;</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="n">MODULES</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODULE&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Target module (timeseries/vision/audio). &quot;</span>
+            <span class="s2">&quot;Auto-inferred from --task when omitted.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--variables&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;N&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Number of sensor channels / input variables. Boosts score by +2 for exact matches.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--dataset-size-bucket&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;dataset_size_bucket&quot;</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;tiny&quot;</span><span class="p">,</span> <span class="s2">&quot;small&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;large&quot;</span><span class="p">],</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;BUCKET&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Dataset size bucket from &#39;mmcli analyze&#39;.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  tiny   &lt; 500 samples   → prefer models ≤ 2k params</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  small  500–4,999       → prefer models ≤ 10k params</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  medium 5k–49,999       → prefer models ≤ 30k params</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  large  ≥ 50,000        → no restriction&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--top&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;N&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Number of ranked matches to display (default: 5).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--modelzoo-path&quot;</span><span class="p">,</span>
+        <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;modelzoo_path&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;DIR&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Path to the tinyml-modelzoo repo root (or its examples/ subdirectory).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_deploy_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;deploy&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Deploy compiled model to target hardware.&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Device deployment workflow — 5 subcommands:</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  check-sdk   Verify SDK installation for a target device</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  artifacts   Locate compiled ModelMaker outputs</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  create      Create CCS project from SDK template + artifacts</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  build       Headless CCS build (requires CCS 12+)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  flash       Flash compiled .out to device via dslite&quot;</span>
+        <span class="p">),</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">sub</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">add_subparsers</span><span class="p">(</span><span class="n">dest</span><span class="o">=</span><span class="s2">&quot;deploy_subcommand&quot;</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;DEPLOY_SUBCOMMAND&quot;</span><span class="p">)</span>
+    <span class="n">sub</span><span class="o">.</span><span class="n">required</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="c1"># ── check-sdk ──────────────────────────────────────────────────────────</span>
+    <span class="n">sdk_p</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;check-sdk&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Verify that the device-specific SDK is installed.&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Locate and validate the SDK required for a target device.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">sdk_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;-d&quot;</span><span class="p">,</span> <span class="s2">&quot;--device&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="n">TARGET_DEVICES</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Target MCU device (e.g. F28P55).&quot;</span><span class="p">)</span>
+    <span class="n">sdk_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--sdk-path&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;sdk_path&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Explicit path to SDK root (skips auto-detection).&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ── artifacts ─────────────────────────────────────────────────────────</span>
+    <span class="n">art_p</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;artifacts&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Locate compiled ModelMaker outputs for a training run.&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Validate that all 4 files needed for CCS project creation exist:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  mod.a, tvmgen_default.h, test_vector.c, user_input_config.h&quot;</span>
+        <span class="p">),</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">art_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;-t&quot;</span><span class="p">,</span> <span class="s2">&quot;--task&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;TASK_TYPE&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Task type string (e.g. motor_fault).&quot;</span><span class="p">)</span>
+    <span class="n">art_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--run-id&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;run_id&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;RUN_ID&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Timestamp run directory name (e.g. 20240115_143022).&quot;</span><span class="p">)</span>
+    <span class="n">art_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model-id&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;model_id&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODEL_ID&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Model name from training config (e.g. CLS_1k_NPU).&quot;</span><span class="p">)</span>
+    <span class="n">art_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--no-quantization&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;no_quantization&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+                       <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Use base (float) golden vectors instead of quantized.&quot;</span><span class="p">)</span>
+    <span class="n">art_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--tinyml-base&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;tinyml_base&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;tinyml-tensorlab root (default: ~/tinyml-tensorlab).&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ── create ─────────────────────────────────────────────────────────────</span>
+    <span class="n">crt_p</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;create&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Create a CCS project from SDK template with compiled artifacts.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;-d&quot;</span><span class="p">,</span> <span class="s2">&quot;--device&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="n">TARGET_DEVICES</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Target MCU device.&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;-t&quot;</span><span class="p">,</span> <span class="s2">&quot;--task&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;TASK_TYPE&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Task type string (e.g. motor_fault).&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--run-id&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;run_id&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;RUN_ID&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Training run timestamp directory name.&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model-id&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;model_id&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;MODEL_ID&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Model name from training artifacts.&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--project-name&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;project_name&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;NAME&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Name for the new CCS project folder.&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--device-type&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;device_type&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;CCS_TYPE&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="p">(</span>
+                           <span class="s2">&quot;CCS device_type string (e.g. f28p55x). &quot;</span>
+                           <span class="s2">&quot;Auto-resolved from --device when omitted.&quot;</span>
+                       <span class="p">))</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--no-quantization&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;no_quantization&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+                       <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Use base (float) golden vectors.&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--tinyml-base&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;tinyml_base&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;tinyml-tensorlab root (default: ~/tinyml-tensorlab).&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--sdk-path&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;sdk_path&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Explicit SDK root path (overrides auto-detection).&quot;</span><span class="p">)</span>
+    <span class="n">crt_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--ccs-templates-path&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;ccs_templates_path&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                       <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Explicit AI examples directory (overrides sdk_path + auto-detect).&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ── build ──────────────────────────────────────────────────────────────</span>
+    <span class="n">bld_p</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;build&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Headless CCS build of a CCS project (requires CCS 12+).&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">bld_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--project-path&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;project_path&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Absolute path to the CCS project folder.&quot;</span><span class="p">)</span>
+    <span class="n">bld_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--ccs-path&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;ccs_path&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;CCS installation root (e.g. /opt/ti/ccs1260).&quot;</span><span class="p">)</span>
+    <span class="n">bld_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--workspace&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Eclipse workspace directory (default: /tmp/ccs_ws_&lt;pid&gt;).&quot;</span><span class="p">)</span>
+    <span class="n">bld_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--build-type&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;build_type&quot;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;full&quot;</span><span class="p">,</span> <span class="s2">&quot;incremental&quot;</span><span class="p">],</span>
+                       <span class="n">default</span><span class="o">=</span><span class="s2">&quot;full&quot;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Build type (default: full).&quot;</span><span class="p">)</span>
+
+    <span class="c1"># ── flash ──────────────────────────────────────────────────────────────</span>
+    <span class="n">fls_p</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;flash&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Flash compiled .out to target device via dslite.&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Connect the device via USB/JTAG before running this.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">fls_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--project-path&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;project_path&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Absolute path to the CCS project folder.&quot;</span><span class="p">)</span>
+    <span class="n">fls_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--ccs-path&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;ccs_path&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;CCS installation root.&quot;</span><span class="p">)</span>
+    <span class="n">fls_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--project-name&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;project_name&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;NAME&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Project binary name (defaults to folder name).&quot;</span><span class="p">)</span>
+    <span class="n">fls_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--ccxml&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Path to the device .ccxml target config (auto-searched if omitted).&quot;</span><span class="p">)</span>
+    <span class="n">fls_p</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--out-file&quot;</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="s2">&quot;out_file&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span>
+                       <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Explicit path to the .out binary (auto-searched if omitted).&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_about_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;about&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Show copyright, credits, and version information.&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Display copyright, version, and ASCII art.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_help_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">subparsers</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">&quot;help&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Show detailed help for all subcommands and options.&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Print full help for every subcommand.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Full help printer</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_print_full_help</span><span class="p">(</span><span class="n">main_parser</span><span class="p">:</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Print help for the top-level parser and every subcommand.&quot;&quot;&quot;</span>
+    <span class="n">detected</span> <span class="o">=</span> <span class="n">_detect_training_device</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mmcli </span><span class="si">{</span><span class="n">__version__</span><span class="si">}</span><span class="s2">  —  tinyml-modelmaker command-line interface&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Detected training backend on this machine: </span><span class="si">{</span><span class="n">detected</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">main_parser</span><span class="o">.</span><span class="n">print_help</span><span class="p">()</span>
+
+    <span class="c1"># Print each subcommand&#39;s help</span>
+    <span class="k">for</span> <span class="n">action</span> <span class="ow">in</span> <span class="n">main_parser</span><span class="o">.</span><span class="n">_subparsers</span><span class="o">.</span><span class="n">_group_actions</span><span class="p">:</span>  <span class="c1"># type: ignore[attr-defined]</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">subparser</span> <span class="ow">in</span> <span class="n">action</span><span class="o">.</span><span class="n">choices</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;help&quot;</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="s1">&#39;─&#39;</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">70</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  mmcli </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;─&#39;</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">70</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">subparser</span><span class="o">.</span><span class="n">print_help</span><span class="p">()</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Post-parse validation</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_validate_args</span><span class="p">(</span><span class="n">args</span><span class="p">:</span> <span class="n">argparse</span><span class="o">.</span><span class="n">Namespace</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Validate args after parsing. Exits with a clear error message on failure.</span>
+
+<span class="sd">    Required fields (module/task/device/model/data/onnx) may come from</span>
+<span class="sd">    --config rather than the CLI, so we defer their check to here instead</span>
+<span class="sd">    of marking them required=True in argparse.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">command</span> <span class="o">=</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span>
+
+    <span class="c1"># --config path must exist</span>
+    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;config&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">config</span><span class="p">):</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;--config file not found: </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># NAS mode: --model/-n is optional when --nas is set</span>
+    <span class="n">using_nas</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;nas_size&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>
+
+    <span class="c1"># For fields that can come from --config, only enforce when --config not given</span>
+    <span class="n">using_config</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;config&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">using_config</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">flag</span><span class="p">,</span> <span class="n">attr</span> <span class="ow">in</span> <span class="p">[(</span><span class="s2">&quot;--module/-m&quot;</span><span class="p">,</span> <span class="s2">&quot;module&quot;</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;--task/-t&quot;</span><span class="p">,</span> <span class="s2">&quot;task&quot;</span><span class="p">),</span>
+                           <span class="p">(</span><span class="s2">&quot;--device/-d&quot;</span><span class="p">,</span> <span class="s2">&quot;device&quot;</span><span class="p">)]:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">flag</span><span class="si">}</span><span class="s2"> is required when --config is not provided&quot;</span><span class="p">)</span>
+        <span class="c1"># --model/-n is required unless NAS is enabled</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;model&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">using_nas</span><span class="p">:</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="s2">&quot;--model/-n is required when --config and --nas are not provided&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;compile&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;onnx&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;--onnx/-o is required when --config is not provided&quot;</span><span class="p">)</span>
+
+    <span class="c1"># NAS is only supported for classification tasks</span>
+    <span class="k">if</span> <span class="n">using_nas</span><span class="p">:</span>
+        <span class="n">task</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;task&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">task</span> <span class="ow">and</span> <span class="n">task</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">NAS_SUPPORTED_TASKS</span><span class="p">:</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;--nas is only supported for classification tasks, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;not &#39;</span><span class="si">{</span><span class="n">task</span><span class="si">}</span><span class="s2">&#39;.</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;  Supported: </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">NAS_SUPPORTED_TASKS</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+    <span class="c1"># Validate project directory structure for train/run</span>
+    <span class="n">project</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;project&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">project</span> <span class="ow">and</span> <span class="n">command</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;train&quot;</span><span class="p">,</span> <span class="s2">&quot;run&quot;</span><span class="p">):</span>
+        <span class="c1"># SECURITY: Sanitize project path to prevent path traversal attacks</span>
+        <span class="n">sanitized_project</span> <span class="o">=</span> <span class="n">_sanitize_input</span><span class="p">(</span><span class="n">project</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">_is_safe_path</span><span class="p">(</span><span class="n">sanitized_project</span><span class="p">):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid project path: </span><span class="si">{</span><span class="n">project</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">project</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">sanitized_project</span><span class="p">)</span>
+            <span class="n">args</span><span class="o">.</span><span class="n">project</span> <span class="o">=</span> <span class="n">project</span>  <span class="c1"># normalize to absolute</span>
+            <span class="n">dataset_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">project</span><span class="p">,</span> <span class="s2">&quot;dataset&quot;</span><span class="p">)</span>
+            <span class="n">annotations_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dataset_dir</span><span class="p">,</span> <span class="s2">&quot;annotations&quot;</span><span class="p">)</span>
+            <span class="c1"># Data can live in classes/ (classification/anomaly), files/</span>
+            <span class="c1"># (regression/forecasting), or images/ (vision)</span>
+            <span class="n">data_subdirs</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;classes&quot;</span><span class="p">,</span> <span class="s2">&quot;files&quot;</span><span class="p">,</span> <span class="s2">&quot;images&quot;</span><span class="p">]</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="n">project</span><span class="p">):</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Project directory not found: </span><span class="si">{</span><span class="n">project</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="n">dataset_dir</span><span class="p">):</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;Project directory missing &#39;dataset/&#39; subdirectory: </span><span class="si">{</span><span class="n">project</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># Validate dataset contents</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="n">annotations_dir</span><span class="p">):</span>
+                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;Dataset missing &#39;annotations/&#39; subdirectory: </span><span class="si">{</span><span class="n">dataset_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dataset_dir</span><span class="p">,</span> <span class="n">d</span><span class="p">))</span>
+                           <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">data_subdirs</span><span class="p">):</span>
+                    <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;Dataset missing data subdirectory (one of &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">data_subdirs</span><span class="p">)</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">dataset_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Path existence checks</span>
+    <span class="n">onnx_file</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;onnx&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">onnx_file</span><span class="p">:</span>
+        <span class="c1"># SECURITY: Sanitize ONNX file path</span>
+        <span class="n">sanitized_onnx</span> <span class="o">=</span> <span class="n">_sanitize_input</span><span class="p">(</span><span class="n">onnx_file</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">_is_safe_path</span><span class="p">(</span><span class="n">sanitized_onnx</span><span class="p">):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid ONNX file path: </span><span class="si">{</span><span class="n">onnx_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">sanitized_onnx</span><span class="p">):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;--onnx file not found: </span><span class="si">{</span><span class="n">sanitized_onnx</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">errors</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;ERROR: </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_validate_config</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check that required config fields are non-null before dispatching.&quot;&quot;&quot;</span>
+    <span class="n">required</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">(</span><span class="s2">&quot;common&quot;</span><span class="p">,</span> <span class="s2">&quot;target_module&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;common&quot;</span><span class="p">,</span> <span class="s2">&quot;task_type&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;common&quot;</span><span class="p">,</span> <span class="s2">&quot;target_device&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;training&quot;</span><span class="p">,</span> <span class="s2">&quot;model_name&quot;</span><span class="p">),</span>
+    <span class="p">]</span>
+    <span class="n">missing</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">section</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">for</span> <span class="n">section</span><span class="p">,</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">required</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">section</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;training&quot;</span><span class="p">][</span><span class="s2">&quot;enable&quot;</span><span class="p">]</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dataset&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;input_data_path&quot;</span><span class="p">):</span>
+        <span class="n">missing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;dataset.input_data_path&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;compilation&quot;</span><span class="p">][</span><span class="s2">&quot;enable&quot;</span><span class="p">]</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;compilation&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model_path&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;training&quot;</span><span class="p">][</span><span class="s2">&quot;enable&quot;</span><span class="p">]:</span>
+            <span class="n">missing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;compilation.model_path&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span>
+            <span class="s2">&quot;ERROR: The following required config fields are missing or null:</span><span class="se">\n</span><span class="s2">  &quot;</span>
+            <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">  &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">missing</span><span class="p">)</span>
+            <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Provide them via CLI flags or a --config YAML file.&quot;</span><span class="p">,</span>
+            <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Dispatch to tinyml_modelmaker via subprocess</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dispatch</span><span class="p">(</span><span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">python_exe</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+              <span class="n">report_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nas_enabled</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Write config to a temp YAML and invoke run_tinyml_modelmaker.py.&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">runner_script</span> <span class="o">=</span> <span class="n">_find_runner_script</span><span class="p">(</span><span class="n">python_exe</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">,</span> <span class="ne">RuntimeError</span><span class="p">)</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;ERROR: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
+        <span class="k">return</span> <span class="mi">1</span>
+
+    <span class="c1"># Set up report handler if requested</span>
+    <span class="n">feed_line</span> <span class="o">=</span> <span class="n">finalize</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">report_path</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.report</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_report_handler</span>
+        <span class="n">feed_line</span><span class="p">,</span> <span class="n">finalize</span> <span class="o">=</span> <span class="n">create_report_handler</span><span class="p">(</span><span class="n">report_path</span><span class="p">,</span> <span class="n">nas_enabled</span><span class="o">=</span><span class="n">nas_enabled</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Report will be written to: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">report_path</span><span class="p">)</span>
+
+    <span class="n">yaml_path</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">yaml_path</span> <span class="o">=</span> <span class="n">write_temp_yaml</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Config YAML: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">yaml_path</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Runner script: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">runner_script</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Python interpreter: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">python_exe</span><span class="p">)</span>
+
+        <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span><span class="n">python_exe</span><span class="p">,</span> <span class="n">runner_script</span><span class="p">,</span> <span class="n">yaml_path</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">verbose</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Running: </span><span class="si">{</span><span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">feed_line</span><span class="p">:</span>
+            <span class="c1"># Capture stdout/stderr line-by-line for report generation</span>
+            <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span>
+                <span class="n">cmd</span><span class="p">,</span>
+                <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">STDOUT</span><span class="p">,</span>
+                <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">bufsize</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="n">feed_line</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+            <span class="n">proc</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
+            <span class="n">finalize</span><span class="p">()</span>
+            <span class="k">return</span> <span class="n">proc</span><span class="o">.</span><span class="n">returncode</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># SECURITY: Use shell=False to prevent command injection (fixes vulnerability)</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">yaml_path</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">unlink</span><span class="p">(</span><span class="n">yaml_path</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">OSError</span><span class="p">:</span>
+                <span class="k">pass</span>
+
+
+<span class="c1"># ---------------------------------------------------------------------------</span>
+<span class="c1"># Entry point</span>
+<span class="c1"># ---------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../mmcli.html#mmcli.cli.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span>
+        <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span>
+        <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">%(levelname)s</span><span class="s2">: </span><span class="si">%(name)s</span><span class="s2"> - </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">detected</span> <span class="o">=</span> <span class="n">_detect_training_device</span><span class="p">()</span>
+
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span>
+        <span class="n">prog</span><span class="o">=</span><span class="s2">&quot;mmcli&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;mmcli — command-line interface for tinyml-modelmaker</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Subcommands:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  init       Create a new project from an example dataset</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  train      Train a model and export ONNX (uses Metal/MPS on macOS)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  compile    Compile an existing ONNX file (Linux/Windows only)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  run        Full pipeline: train then compile</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  info       Show supported devices, models, and presets</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  analyze    Analyse a project dataset (size, classes, sequence length)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  recommend  Recommend a model and FE preset from modelzoo examples</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  about      Show copyright, credits, and version info</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  help       Show detailed help for all subcommands</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Detected training backend: </span><span class="si">{</span><span class="n">detected</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Environment variables:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  MMCLI_PYTHON      Python interpreter with tinyml_modelmaker installed</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;                    Default: &#39;python&#39; or &#39;python3&#39; on PATH</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;                    (auto-detected if MMCLI_PYTHON is set correctly)</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  MMCLI_DATASETS    Override built-in datasets directory for &#39;mmcli init&#39;</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;  MMCLI_MODELZOO_PATH  Path to the tinyml-modelzoo repo root for &#39;mmcli recommend&#39;</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Run &#39;mmcli help&#39; to see all subcommands and options at once.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Run &#39;mmcli &lt;subcommand&gt; --help&#39; for subcommand-specific help.&quot;</span>
+        <span class="p">),</span>
+        <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--version&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">&quot;version&quot;</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;mmcli </span><span class="si">{</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--verbose&quot;</span><span class="p">,</span> <span class="s2">&quot;-v&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Enable debug logging and show the subprocess command.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--dry-run&quot;</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Build the config and print the generated YAML, but do not run anything.&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">subparsers</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_subparsers</span><span class="p">(</span><span class="n">dest</span><span class="o">=</span><span class="s2">&quot;command&quot;</span><span class="p">,</span> <span class="n">metavar</span><span class="o">=</span><span class="s2">&quot;SUBCOMMAND&quot;</span><span class="p">)</span>
+    <span class="n">subparsers</span><span class="o">.</span><span class="n">required</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="n">_add_init_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_train_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_compile_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_run_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_info_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_analyze_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_recommend_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_deploy_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_about_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+    <span class="n">_add_help_parser</span><span class="p">(</span><span class="n">subparsers</span><span class="p">)</span>
+
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">verbose</span><span class="p">:</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">()</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+
+    <span class="c1"># Handle help, info, and about subcommands before any other processing</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;help&quot;</span><span class="p">:</span>
+        <span class="n">_print_full_help</span><span class="p">(</span><span class="n">parser</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;about&quot;</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.about</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_about</span>
+        <span class="n">run_about</span><span class="p">()</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;init&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">list</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">print_dataset_list</span>
+            <span class="n">print_dataset_list</span><span class="p">(</span><span class="n">task_type</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">task</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">module</span><span class="p">)</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="c1"># Validate required args for extraction</span>
+        <span class="n">missing</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span><span class="o">.</span><span class="n">task</span><span class="p">:</span>
+            <span class="n">missing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;--task / -t&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span><span class="o">.</span><span class="n">project</span><span class="p">:</span>
+            <span class="n">missing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;--project / -p&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span><span class="o">.</span><span class="n">dataset</span><span class="p">:</span>
+            <span class="n">missing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;--dataset&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;ERROR: The following arguments are required: &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">missing</span><span class="p">)</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Use &#39;mmcli init --list&#39; to see available datasets.&quot;</span><span class="p">,</span>
+                <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">extract_dataset</span>
+        <span class="n">extract_dataset</span><span class="p">(</span>
+            <span class="n">dataset_name</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">dataset</span><span class="p">,</span>
+            <span class="n">project_path</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">project</span><span class="p">,</span>
+            <span class="n">task_type</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">task</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;info&quot;</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.info</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_info</span>
+        <span class="n">run_info</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="n">_get_python_exe</span><span class="p">())</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;analyze&quot;</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.analyze</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_analyze</span>
+        <span class="n">run_analyze</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;recommend&quot;</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.recommend</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_recommend</span>
+        <span class="n">run_recommend</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">&quot;deploy&quot;</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">mmcli.deploy</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+            <span class="n">run_deploy_check_sdk</span><span class="p">,</span> <span class="n">run_deploy_artifacts</span><span class="p">,</span>
+            <span class="n">run_deploy_create</span><span class="p">,</span> <span class="n">run_deploy_build</span><span class="p">,</span> <span class="n">run_deploy_flash</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">_deploy_handlers</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;check-sdk&quot;</span><span class="p">:</span> <span class="n">run_deploy_check_sdk</span><span class="p">,</span>
+            <span class="s2">&quot;artifacts&quot;</span><span class="p">:</span> <span class="n">run_deploy_artifacts</span><span class="p">,</span>
+            <span class="s2">&quot;create&quot;</span><span class="p">:</span>    <span class="n">run_deploy_create</span><span class="p">,</span>
+            <span class="s2">&quot;build&quot;</span><span class="p">:</span>     <span class="n">run_deploy_build</span><span class="p">,</span>
+            <span class="s2">&quot;flash&quot;</span><span class="p">:</span>     <span class="n">run_deploy_flash</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="n">handler</span> <span class="o">=</span> <span class="n">_deploy_handlers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">deploy_subcommand</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">handler</span><span class="p">:</span>
+            <span class="n">handler</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">_validate_args</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">build_config</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+    <span class="n">_validate_config</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">dry_run</span><span class="p">:</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">_yaml</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;# Generated config (dry run — not executed)&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">_yaml</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">default_flow_style</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">sort_keys</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">python_exe</span> <span class="o">=</span> <span class="n">_get_python_exe</span><span class="p">()</span>
+
+    <span class="c1"># Determine report output path if --report is enabled</span>
+    <span class="n">report_path</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s1">&#39;report&#39;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+        <span class="n">train_output</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;training&#39;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;train_output_path&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">train_output</span><span class="p">:</span>
+            <span class="n">report_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">train_output</span><span class="p">,</span> <span class="s1">&#39;report.html&#39;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">project</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s1">&#39;project&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">project</span><span class="p">:</span>
+                <span class="n">report_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">project</span><span class="p">),</span> <span class="s1">&#39;run&#39;</span><span class="p">,</span> <span class="s1">&#39;report.html&#39;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">report_path</span> <span class="o">=</span> <span class="s1">&#39;report.html&#39;</span>
+
+    <span class="n">nas_enabled</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s1">&#39;nas_size&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="n">rc</span> <span class="o">=</span> <span class="n">_dispatch</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">python_exe</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">verbose</span><span class="p">,</span>
+                   <span class="n">report_path</span><span class="o">=</span><span class="n">report_path</span><span class="p">,</span> <span class="n">nas_enabled</span><span class="o">=</span><span class="n">nas_enabled</span><span class="p">)</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">rc</span><span class="p">)</span></div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">mmcli</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../modules.html">mmcli</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2024, Texas Instruments.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.1.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

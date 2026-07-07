@@ -1,97 +1,44 @@
 """
 Test configuration and fixtures for mmcli.
 This file extends the root conftest.py with test-specific mocks.
+
+The tinyml_modelmaker package is installed as a mock package in site-packages
+for testing purposes. No mocking of subprocess calls is needed.
 """
-import sys
-from unittest import mock
+import pytest
 
 
 @pytest.fixture
 def mock_tinyml_modelmaker_registry():
-    """Create a stub tinyml_modelmaker package for testing."""
+    """Fixture to ensure tinyml_modelmaker is available for tests.
 
-    class MockConstants:
-        TASK_DESCRIPTIONS = {
-            "generic_timeseries_classification": {
-                "task_name": "Generic Timeseries Classification",
-                "target_devices": ["F28P55", "MSPM0G3507"]
-            },
-            "generic_timeseries_regression": {
-                "task_name": "Generic Timeseries Regression",
-                "target_devices": ["F28P55", "MSPM0G3507"]
-            },
-            "generic_timeseries_forecasting": {
-                "task_name": "Generic Timeseries Forecasting",
-                "target_devices": ["F28P55"]
-            },
-            "generic_timeseries_anomalydetection": {
-                "task_name": "Generic Timeseries Anomaly Detection",
-                "target_devices": ["F28P55", "MSPM0G3507", "AM263"]
-            }
-        }
-        FEATURE_EXTRACTION_PRESET_DESCRIPTIONS = {
-            "FE_DEFAULT": {"common": {"task_type": "generic_timeseries_classification"}},
-            "FE_LOW_POWER": {"common": {"task_type": ["generic_timeseries_classification", "generic_timeseries_regression"]}},
-        }
+    This fixture exists as a placeholder - the actual tinyml_modelmaker
+    is installed as a mock package in site-packages for testing.
+    """
+    yield
 
-    class MockTraining:
-        @staticmethod
-        def get_model_descriptions(task_type=None, target_device=None):
-            """Return mock model descriptions."""
-            models = {
-                "CLS_1k_NPU": type("ModelDesc", (), {
-                    "get": lambda self, key, default=None: {"training": {"target_devices": {"F28P55": {}}}} if key == "training" else None,
-                    **({"training": type("TrainingInfo", (), {"target_devices": {"F28P55": {}}})()} if target_device == "F28P55" or not target_device else {})
-                })(),
-                "REGR_1k": type("ModelDesc", (), {
-                    "get": lambda self, key, default=None: {"training": {"target_devices": {"F28P55": {}}}} if key == "training" else None,
-                })(),
-                "FCST_LSTM8": type("ModelDesc", (), {
-                    "get": lambda self, key, default=None: {"training": {"target_devices": {"F28P55": {}}}} if key == "training" else None,
-                })(),
-                "AD_1k": type("ModelDesc", (), {
-                    "get": lambda self, key, default=None: {"training": {"target_devices": {"F28P55": {}}}} if key == "training" else None,
-                })(),
-            }
 
-            if task_type:
-                return {name: desc for name, desc in models.items()}
-            return models
+# Hypothesis fuzz testing fixtures
 
-    # Create stub modules
-    mock_ai_modules = type("MockAIModules", (), {})()
+@pytest.fixture(scope="session")
+def cli_input_strategies():
+    """Hypothesis strategies for CLI input generation."""
+    from hypothesis import strategies as st
 
-    mock_timeseries = type("TimeseriesModule", (), {
-        "constants": MockConstants(),
-        "training": MockTraining(),
-    })()
+    return {
+        'basic': st.text(min_size=1, max_size=256),
+        'alphanumeric': st.text(alphabet=st.characters(whitelist_categories=['Lu', 'Ll', 'Nd'])),
+        'path_like': st.text(alphabet=st.characters(whitelist_characters=['a-z', 'A-Z', '0-9', '-', '_', '.', '/'])),
+    }
 
-    mock_vision = type("VisionModule", (), {
-        "constants": MockConstants(),
-        "training": MockTraining(),
-    })()
 
-    mock_audio = type("AudioModule", (), {
-        "constants": MockConstants(),
-        "training": MockTraining(),
-    })()
+@pytest.fixture
+def fuzz_cli_argument(cli_input_strategies):
+    """Generate random CLI argument values using hypothesis."""
+    from hypothesis import strategies as st
 
-    # Build the stub tinyml_modelmaker package
-    stub_package = type("MockTinyMLModelMaker", (), {
-        "__file__": "/tmp/fake_tinyml_modelmaker",
-        "ai_modules": mock_ai_modules,
-    })()
-
-    stub_package.ai_modules.timeseries = mock_timeseries
-    stub_package.ai_modules.vision = mock_vision
-    stub_package.ai_modules.audio = mock_audio
-
-    # Patch sys.modules before info.py is imported
-    with mock.patch.dict('sys.modules', {
-        'tinyml_modelmaker': stub_package,
-        'tinyml_modelmaker.ai_modules': mock_ai_modules,
-        'tinyml_modelmaker.ai_modules.timeseries': mock_timeseries,
-        'tinyml_modelmaker.ai_modules.vision': mock_vision,
-        'tinyml_modelmaker.ai_modules.audio': mock_audio,
-    }):
-        yield
+    return st.one_of(
+        cli_input_strategies['basic'],
+        cli_input_strategies['alphanumeric'],
+        cli_input_strategies['path_like']
+    )

@@ -26,3 +26,9 @@ markers = [
     "cli: Tier 4 CLI integration tests",
     "e2e: Full end-to-end pipeline tests (slow, requires MMCLI_PYTHON + TVM)",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "hypothesis>=6.0",
+    "pytest-hypothesis>=0.2.0",
+]

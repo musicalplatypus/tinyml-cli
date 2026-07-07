@@ -3,11 +3,12 @@ Device deployment utilities for mmcli.
 
 Wraps the agent-skills device_deployment workflow as CLI-friendly functions.
 Supports 5 subcommands:
-  check-sdk  — verify SDK installation for a device family
-  artifacts  — locate ModelMaker run outputs needed for CCS project
-  create     — create CCS project from SDK template + compiled artifacts
-  build      — headless CCS build
-  flash      — flash compiled .out via dslite
+
+- check-sdk — verify SDK installation for a device family
+- artifacts — locate ModelMaker run outputs needed for CCS project
+- create    — create CCS project from SDK template + compiled artifacts
+- build     — headless CCS build
+- flash     — flash compiled .out via dslite
 
 CC1312 / CC1314 are SimpleLink LP devices; CCS type strings follow the
 cc13xx lowercase convention established by the cc1352 entry in the reference.

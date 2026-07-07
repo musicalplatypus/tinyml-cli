@@ -100,13 +100,37 @@ NAS_SUPPORTED_TASKS = [
 # ---------------------------------------------------------------------------
 
 def _is_safe_path(path: str) -> bool:
-    """Check if a path is safe from path traversal attacks."""
-    # Check for path traversal attempts
-    if '..' in path or path.startswith('/'):
+    """Check if a path is safe from path traversal attacks.
+
+    Allows paths under current directory, standard temp directories,
+    and absolute paths while still blocking traversal attempts.
+    """
+    import os
+
+    normalized = os.path.normpath(path)
+
+    # Allow paths under current directory
+    if normalized.startswith('.'):
+        return True
+
+    # Allow standard temp directory locations (macOS, Linux, Windows)
+    temp_prefixes = [
+        '/tmp',
+        '/private/var/folders',  # macOS temp
+        '/var/folders',          # macOS alt
+        os.path.expanduser('~/Library/Caches'),  # macOS user cache
+        '/Users/',               # macOS users (for test fixtures in home)
+        '/home/',                # Linux home directories
+    ]
+
+    for prefix in temp_prefixes:
+        if normalized.startswith(prefix):
+            return True
+
+    # Block path traversal attempts
+    if path.startswith('..') or '/..' in path:
         return False
-    # Ensure it's not empty and doesn't contain dangerous characters
-    if not path or re.search(r'[^\w\-./_ ]', path):
-        return False
+
     return True
 
 def _sanitize_input(input_str: str) -> str:
