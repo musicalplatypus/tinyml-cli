@@ -638,3 +638,19 @@ To create a release:
 git tag v1.0.0
 git push origin v1.0.0
 ```
+
+## Security Considerations
+
+### Input Validation
+All user inputs are sanitized before use:
+- Command arguments are stripped of shell metacharacters (`;`, `$`, `` ` ``, `|`)
+- File paths are validated to prevent directory traversal
+- Environment variables are cleaned before subprocess calls
+
+### Subprocess Security
+All subprocess calls use `shell=False` with argument arrays to prevent command injection.
+
+### Path Validation
+Project paths must be relative or within safe directories (not absolute paths starting with `/`).
+
+For more information, see [SECURITY.md](./SECURITY.md) and [docs/SECURITY_MODEL.md](./docs/SECURITY_MODEL.md).
