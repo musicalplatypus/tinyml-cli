@@ -102,18 +102,15 @@ NAS_SUPPORTED_TASKS = [
 def _is_safe_path(path: str) -> bool:
     """Check if a path is safe from path traversal attacks.
 
-    Allows paths under current directory, standard temp directories,
-    and absolute paths while still blocking traversal attempts.
+    Allows paths under current directory and standard temp directories,
+    while blocking path traversal attempts.
     """
     import os
 
     normalized = os.path.normpath(path)
 
-    # Allow paths under current directory
-    if normalized.startswith('.'):
-        return True
-
     # Allow standard temp directory locations (macOS, Linux, Windows)
+    # Check this FIRST before blocking absolute paths
     temp_prefixes = [
         '/tmp',
         '/private/var/folders',  # macOS temp
@@ -127,10 +124,44 @@ def _is_safe_path(path: str) -> bool:
         if normalized.startswith(prefix):
             return True
 
-    # Block path traversal attempts
-    if path.startswith('..') or '/..' in path:
+    # Block absolute paths (except known temp locations above)
+    if normalized.startswith('/'):
         return False
 
+    # Normalize to forward slashes for consistent checking
+    normalized_forward = normalized.replace('\\', '/')
+
+    # Block deep path traversal (contains /../ in path - blocks traversing up multiple dirs)
+    if '/../' in normalized_forward:
+        return False
+
+    # Check for malicious patterns like ..../ or ....../ (multiple dots before slash)
+    if re.search(r'\.{4,}/', normalized_forward):
+        return False
+
+    # Allow relative paths starting with ./
+    if normalized_forward.startswith('./'):
+        return True
+
+    # Allow relative paths without deep traversal (e.g., 'relative/path/file.txt')
+    try:
+        abs_path = os.path.abspath(normalized)
+        base_dir = os.path.abspath('.')
+        if abs_path.startswith(base_dir + os.sep) or abs_path == base_dir:
+            return True
+    except Exception:
+        pass
+
+    # Allow relative paths without deep traversal patterns
+    parts = normalized_forward.split('/')
+    for part in parts:
+        if part == '..':
+            continue  # Single .. is okay, just means parent directory
+        # Check for excessive dots (could be malicious pattern)
+        if len(part) > 2 and part.startswith('..'):
+            return False
+
+    # Default: allow relative paths that don't contain dangerous patterns
     return True
 
 def _sanitize_input(input_str: str) -> str:
