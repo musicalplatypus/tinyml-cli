@@ -936,6 +936,22 @@ def _add_about_parser(subparsers) -> None:
     )
 
 
+def _add_shell_parser(subparsers) -> None:
+    """Add the ``shell`` subcommand which launches an interactive REPL.
+
+    The command takes no additional arguments – it simply starts the mmcli
+    interactive shell implemented in :mod:`mmcli.interactive`.
+    """
+    subparsers.add_parser(
+        "shell",
+        help="Enter interactive REPL-like shell mode.",
+        description=(
+            "Launch an interactive mmcli shell where commands such as 'info',\n"
+            "'recommend', 'analyze', and others can be executed in a REPL.\n"
+            "Use 'exit' or Ctrl‑D to leave the shell."
+        ),
+    )
+
 def _add_help_parser(subparsers) -> None:
     subparsers.add_parser(
         "help",
@@ -1198,6 +1214,7 @@ def main() -> None:
     _add_recommend_parser(subparsers)
     _add_deploy_parser(subparsers)
     _add_about_parser(subparsers)
+    _add_shell_parser(subparsers)
     _add_help_parser(subparsers)
 
     args = parser.parse_args()
@@ -1274,6 +1291,11 @@ def main() -> None:
         handler = _deploy_handlers.get(args.deploy_subcommand)
         if handler:
             handler(args)
+        sys.exit(0)
+
+    if args.command == "shell":
+        from mmcli.interactive import run_shell
+        run_shell()
         sys.exit(0)
 
     _validate_args(args)
