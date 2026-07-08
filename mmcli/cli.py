@@ -38,6 +38,47 @@ logger = logging.getLogger(__name__)
 from mmcli.batch import expand_project_paths, run_batch, format_batch_results
 
 # ---------------------------------------------------------------------------
+# Security helpers (restored from Phase 1; removed in Phase 5 eb0a1bd)
+# ---------------------------------------------------------------------------
+
+import tempfile
+from pathlib import Path
+
+
+def _is_safe_path(path: str, base_dir=None) -> bool:
+    """Return True if *path* resolves under *base_dir* (default: cwd) or the OS temp dir.
+
+    Uses pathlib.resolve() — immune to iterative-replace bypasses and encoded traversal.
+    Shell metacharacters in paths are irrelevant because all subprocess calls use shell=False.
+    """
+    if not path or not path.strip():
+        return False
+    try:
+        resolved = Path(path).resolve()
+        anchor = Path(base_dir).resolve() if base_dir else Path.cwd()
+        if resolved.is_relative_to(anchor):
+            return True
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        return resolved.is_relative_to(temp_root)
+    except (ValueError, OSError):
+        return False
+
+
+def _sanitize_input(input_str: str, max_length: int = 1024) -> str:
+    """Enforce a length cap on user-supplied strings.
+
+    Raises ValueError if the input exceeds *max_length*.  Does NOT strip or
+    transform characters — shell injection is prevented by shell=False, and
+    path traversal is caught by _is_safe_path().
+    """
+    if not isinstance(input_str, str):
+        input_str = str(input_str)
+    if len(input_str) > max_length:
+        raise ValueError(f"Input exceeds maximum length of {max_length}")
+    return input_str
+
+
+# ---------------------------------------------------------------------------
 # Known enumerations (for --help text)
 # ---------------------------------------------------------------------------
 
