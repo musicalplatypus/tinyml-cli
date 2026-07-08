@@ -34,6 +34,9 @@ from mmcli.builder import build_config, write_temp_yaml
 
 logger = logging.getLogger(__name__)
 
+# Batch utilities
+from mmcli.batch import expand_project_paths, run_batch, format_batch_results
+
 # ---------------------------------------------------------------------------
 # Known enumerations (for --help text)
 # ---------------------------------------------------------------------------
@@ -576,6 +579,21 @@ def _add_train_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_training_args(p)
+    # Batch mode flags
+    batch_group = p.add_mutually_exclusive_group()
+    batch_group.add_argument(
+        "--batch", "-b",
+        nargs="+",
+        metavar="PROJECT",
+        help="Process multiple projects (supports glob patterns)"
+    )
+    batch_group.add_argument(
+        "--directory", "-D",
+        type=str,
+        dest="directory",
+        metavar="DIR",
+        help="Process all .yaml files in directory"
+    )
 
 
 def _add_compile_parser(subparsers) -> None:
@@ -616,6 +634,21 @@ def _add_run_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_training_args(p)
+    # Batch mode flags
+    batch_group = p.add_mutually_exclusive_group()
+    batch_group.add_argument(
+        "--batch", "-b",
+        nargs="+",
+        metavar="PROJECT",
+        help="Process multiple projects (supports glob patterns)"
+    )
+    batch_group.add_argument(
+        "--directory", "-D",
+        type=str,
+        dest="directory",
+        metavar="DIR",
+        help="Process all .yaml files in directory"
+    )
     _add_compilation_args(p)
 
 
@@ -735,6 +768,21 @@ def _add_analyze_parser(subparsers) -> None:
             "Project directory containing dataset/. "
             "May also point directly at the dataset folder."
         ),
+    )
+    # Batch mode flags
+    batch_group = p.add_mutually_exclusive_group()
+    batch_group.add_argument(
+        "--batch", "-b",
+        nargs="+",
+        metavar="PROJECT",
+        help="Process multiple projects (supports glob patterns)"
+    )
+    batch_group.add_argument(
+        "--directory", "-d",
+        type=str,
+        dest="directory",
+        metavar="DIR",
+        help="Process all .yaml files in directory"
     )
 
 
@@ -1250,14 +1298,72 @@ def main() -> None:
         sys.exit(0)
 
     if args.command == "analyze":
-        from mmcli.analyze import run_analyze
-        run_analyze(args)
-        sys.exit(0)
+        # Batch mode handling
+        if getattr(args, "batch", None) or getattr(args, "directory", None):
+            import copy, glob, os
+            if args.batch:
+                paths = expand_project_paths(args.batch)
+            elif args.directory:
+                yaml_files = glob.glob(os.path.join(args.directory, "**/*.yaml"), recursive=True)
+                paths = yaml_files
+            else:
+                paths = [args.project]
+
+            def analyze_one(project_path):
+                local_args = copy.deepcopy(args)
+                local_args.project = project_path
+                setattr(local_args, "batch", None)
+                setattr(local_args, "directory", None)
+                from mmcli.analyze import run_analyze as _run_analyze
+                try:
+                    _run_analyze(local_args)
+                    return True
+                except SystemExit as e:
+                    # If the function exits with non-zero code, treat as failure
+                    return False
+
+            results = run_batch(analyze_one, paths)
+            print(format_batch_results(results))
+            sys.exit(0 if all(r["success"] for r in results.values()) else 1)
+        else:
+            from mmcli.analyze import run_analyze
+            run_analyze(args)
+            sys.exit(0)
 
     if args.command == "recommend":
         from mmcli.recommend import run_recommend
         run_recommend(args)
         sys.exit(0)
+
+    # Batch processing for train command
+    if args.command == "train" and (getattr(args, "batch", None) or getattr(args, "directory", None)):
+        import copy, glob, os
+        # Determine project paths
+        if args.batch:
+            paths = expand_project_paths(args.batch)
+        elif args.directory:
+            yaml_files = glob.glob(os.path.join(args.directory, "**/*.yaml"), recursive=True)
+            paths = yaml_files
+        else:
+            paths = [args.project]
+
+        def train_one(project_path):
+            # Clone arguments and set project path
+            local_args = copy.deepcopy(args)
+            local_args.project = project_path
+            # Clear batch flags to avoid recursion
+            setattr(local_args, "batch", None)
+            setattr(local_args, "directory", None)
+            _validate_args(local_args)
+            cfg = build_config(local_args)
+            _validate_config(cfg)
+            py_exe = _get_python_exe()
+            rc = _dispatch(cfg, py_exe, verbose=getattr(local_args, "verbose", False), report_path=None)
+            return rc == 0
+
+        results = run_batch(train_one, paths)
+        print(format_batch_results(results))
+        sys.exit(0 if all(r["success"] for r in results.values()) else 1)
 
     if args.command == "deploy":
         from mmcli.deploy import (
