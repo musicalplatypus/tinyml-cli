@@ -1235,6 +1235,29 @@ def _validate_args(args: argparse.Namespace) -> None:
     errors = []
     command = args.command
 
+    # --- Input sanitization (length cap on free-text string flags) -----------
+    for attr in ("module", "task", "device", "model"):
+        val = getattr(args, attr, None)
+        if val is not None:
+            try:
+                setattr(args, attr, _sanitize_input(str(val)))
+            except ValueError as exc:
+                errors.append(f"--{attr.replace('_', '-')}: {exc}")
+
+    # --- Path traversal guard (relative paths only) --------------------------
+    # Absolute paths are user-specified filesystem locations and are accepted;
+    # only relative paths can traverse outside the working directory via '..'.
+    for path_attr, flag in [
+        ("config", "--config"),
+        ("onnx", "--onnx"),
+        ("project", "--project/-i"),
+    ]:
+        val = getattr(args, path_attr, None)
+        if val and not os.path.isabs(val) and not _is_safe_path(val):
+            errors.append(
+                f"{flag} contains an unsafe path traversal sequence: {val!r}"
+            )
+
     # --config path must exist
     if getattr(args, "config", None) and not os.path.isfile(args.config):
         errors.append(f"--config file not found: {args.config}")
