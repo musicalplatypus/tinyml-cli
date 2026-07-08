@@ -39,6 +39,7 @@ import sys
 
 from mmcli import __version__
 from mmcli.builder import build_config, write_temp_yaml
+from mmcli.progress import run_with_progress
 
 logger = logging.getLogger(__name__)
 
@@ -704,6 +705,13 @@ def _add_train_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_training_args(p)
+    # Progress flag for visual feedback during long operations
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        default=False,
+        help="Show a progress bar while running the command."
+    )
 
 
 def _add_compile_parser(subparsers) -> None:
@@ -724,6 +732,13 @@ def _add_compile_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_compilation_args(p)
+    # Progress flag for visual feedback during long operations
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        default=False,
+        help="Show a progress bar while running the command."
+    )
 
 
 def _add_run_parser(subparsers) -> None:
@@ -744,7 +759,21 @@ def _add_run_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_training_args(p)
+    # Progress flag for visual feedback during long operations
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        default=False,
+        help="Show a progress bar while running the command."
+    )
     _add_compilation_args(p)
+    # Progress flag for visual feedback during long operations
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        default=False,
+        help="Show a progress bar while running the command."
+    )
 
 
 def _add_info_parser(subparsers) -> None:
@@ -1444,6 +1473,27 @@ def main() -> None:
                 report_path = 'report.html'
 
     nas_enabled = getattr(args, 'nas_size', None) is not None
-    rc = _dispatch(config, python_exe, verbose=args.verbose,
-                   report_path=report_path, nas_enabled=nas_enabled)
+    if getattr(args, 'progress', False):
+        # Use progress runner for visual feedback
+        description_map = {
+            "train": "Training",
+            "compile": "Compilation",
+            "run": "Running pipeline"
+        }
+        description = description_map.get(args.command, "Executing")
+        try:
+            runner_script = _find_runner_script(python_exe)
+        except Exception as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        yaml_path = write_temp_yaml(config)
+        rc = run_with_progress([python_exe, runner_script, yaml_path], description=description)
+        # Clean up temporary YAML file
+        try:
+            os.unlink(yaml_path)
+        except OSError:
+            pass
+    else:
+        rc = _dispatch(config, python_exe, verbose=args.verbose,
+                       report_path=report_path, nas_enabled=nas_enabled)
     sys.exit(rc)

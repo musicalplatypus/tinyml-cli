@@ -4,4 +4,5 @@
 #-e ../tinyml-tensorlab/tinyml-modelmaker
 
 PyYAML>=6.0
+tqdm>=4.0
 pyinstaller>=6.0
