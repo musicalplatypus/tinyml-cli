@@ -574,11 +574,18 @@ def _add_train_parser(subparsers) -> None:
             "  # Force CPU:\n"
             "  mmcli train ... --training-device cpu\n\n"
             "  # Explicit Metal:\n"
-            "  mmcli train ... --training-device mps"
+            "  mmcli train ... --training-device mps\n\n"
+            "  # Show progress bar:\n"
+            "  mmcli train -m timeseries -t classification -d F28P55 --progress"
         ),
     )
     _add_common_args(p)
     _add_training_args(p)
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        help="Display progress bar during training",
+    )
     # Batch mode flags
     batch_group = p.add_mutually_exclusive_group()
     batch_group.add_argument(
@@ -609,11 +616,18 @@ def _add_compile_parser(subparsers) -> None:
             "Example:\n"
             "  mmcli compile -m timeseries -t generic_timeseries_classification \\\n"
             "                -d F28P55 -n CLS_1k_NPU \\\n"
-            "                -o ./data/projects/my_run/model.onnx"
+            "                -o ./data/projects/my_run/model.onnx\n\n"
+            "  # Show progress bar:\n"
+            "  mmcli compile -m timeseries -t classification -d F28P55 --progress"
         ),
     )
     _add_common_args(p)
     _add_compilation_args(p)
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        help="Display progress bar during compilation",
+    )
 
 
 def _add_run_parser(subparsers) -> None:
@@ -629,11 +643,18 @@ def _add_run_parser(subparsers) -> None:
             "Note: compilation requires ti_mcu_nnc (Linux/Windows only).\n\n"
             "Example:\n"
             "  mmcli run -m timeseries -t generic_timeseries_classification \\\n"
-            "            -d F28P55 -n CLS_1k_NPU -i ./my_project"
+            "            -d F28P55 -n CLS_1k_NPU -i ./my_project\n\n"
+            "  # Show progress bar for both training and compilation:\n"
+            "  mmcli run -m timeseries -t classification -d F28P55 --progress"
         ),
     )
     _add_common_args(p)
     _add_training_args(p)
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        help="Display progress bar during training and compilation",
+    )
     # Batch mode flags
     batch_group = p.add_mutually_exclusive_group()
     batch_group.add_argument(
@@ -662,7 +683,8 @@ def _add_info_parser(subparsers) -> None:
             "Examples:\n"
             "  mmcli info -m timeseries                        # list task types\n"
             "  mmcli info -m timeseries -t arc_fault           # details for arc_fault\n"
-            "  mmcli info -m timeseries -t arc_fault -d F28P55 # models for F28P55"
+            "  mmcli info -m timeseries -t arc_fault -d F28P55 # models for F28P55\n"
+            "  mmcli info -m timeseries --format json         # JSON output\n"
         ),
     )
     p.add_argument(
@@ -683,6 +705,18 @@ def _add_info_parser(subparsers) -> None:
         default=None,
         metavar="DEVICE",
         help="Target device to filter models.",
+    )
+    p.add_argument(
+        "--format",
+        choices=["text", "json", "csv", "yaml"],
+        default="text",
+        help="Output format (default: text)",
+    )
+    p.add_argument(
+        "-o", "--output",
+        type=str,
+        metavar="FILE",
+        help="Write output to file instead of stdout",
     )
 
 
@@ -756,7 +790,10 @@ def _add_analyze_parser(subparsers) -> None:
             "  - Minimum sequence length\n"
             "  - Dataset size bucket (tiny/small/medium/large)\n\n"
             "The 'size bucket' output can be passed directly to 'mmcli recommend'\n"
-            "via --dataset-size-bucket to improve model selection accuracy."
+            "via --dataset-size-bucket to improve model selection accuracy.\n\n"
+            "Examples:\n"
+            "  mmcli analyze -i ./my-project --format json\n"
+            "  mmcli analyze -i ./my-project -o results.csv\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -768,6 +805,18 @@ def _add_analyze_parser(subparsers) -> None:
             "Project directory containing dataset/. "
             "May also point directly at the dataset folder."
         ),
+    )
+    p.add_argument(
+        "--format",
+        choices=["text", "json", "csv", "yaml"],
+        default="text",
+        help="Output format (default: text)",
+    )
+    p.add_argument(
+        "-o", "--output",
+        type=str,
+        metavar="FILE",
+        help="Write output to file instead of stdout",
     )
     # Batch mode flags
     batch_group = p.add_mutually_exclusive_group()
@@ -799,7 +848,10 @@ def _add_recommend_parser(subparsers) -> None:
             "  1. --modelzoo-path argument\n"
             "  2. MMCLI_MODELZOO_PATH env var (set to repo root)\n"
             "  3. Auto-detected sibling of the installed tinyml_modelmaker package\n"
-            "  4. Common default paths (~/tinyml-tensorlab/tinyml-modelzoo, etc.)"
+            "  4. Common default paths (~/tinyml-tensorlab/tinyml-modelzoo, etc.)\n\n"
+            "Examples:\n"
+            "  mmcli recommend -t arc_fault -d F28P55 --format yaml\n"
+            "  mmcli recommend -t classification -d F28P55 -o recommendations.json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -862,6 +914,18 @@ def _add_recommend_parser(subparsers) -> None:
         default=None,
         metavar="DIR",
         help="Path to the tinyml-modelzoo repo root (or its examples/ subdirectory).",
+    )
+    p.add_argument(
+        "--format",
+        choices=["text", "json", "csv", "yaml"],
+        default="text",
+        help="Output format (default: text)",
+    )
+    p.add_argument(
+        "-o", "--output",
+        type=str,
+        metavar="FILE",
+        help="Write output to file instead of stdout",
     )
 
 
@@ -998,6 +1062,90 @@ def _add_shell_parser(subparsers) -> None:
             "'recommend', 'analyze', and others can be executed in a REPL.\n"
             "Use 'exit' or Ctrl‑D to leave the shell."
         ),
+    )
+
+
+def _add_diagnose_parser(subparsers) -> None:
+    """Add the ``diagnose`` subcommand for troubleshooting."""
+    p = subparsers.add_parser(
+        "diagnose",
+        help="Run diagnostic checks to troubleshoot issues.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Run diagnostic checks to identify common issues.\n\n"
+            "Examples:\n"
+            "  mmcli diagnose              # Run basic diagnostics\n"
+            "  mmcli diagnose --full       # Run extended diagnostics\n"
+            "  mmcli diagnose --error 'Cannot import tinyml_modelmaker'  # Get fix for specific error\n"
+            "  mmcli diagnose --full --format json   # JSON output for automation\n"
+        ),
+    )
+
+    diag_group = p.add_mutually_exclusive_group()
+    diag_group.add_argument(
+        "--full", "-f",
+        action="store_true",
+        help="Run extended diagnostics (includes disk space, etc.)",
+    )
+    diag_group.add_argument(
+        "--error", "-e",
+        type=str,
+        metavar="MESSAGE",
+        help="Get fix suggestion for a specific error message",
+    )
+
+
+def _add_compare_parser(subparsers) -> None:
+    """Add the ``compare`` subcommand for comparing models."""
+    p = subparsers.add_parser(
+        "compare",
+        help="Compare multiple models side-by-side.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Compare model availability and attributes across task types.\n\n"
+            "Examples:\n"
+            "  mmcli compare -m timeseries \\\n"
+            "      --model1 generic_timeseries_classification \\\n"
+            "      --model2 generic_timeseries_regression\n"
+            "  mmcli compare -m timeseries --all-models --device F28P55\n"
+        ),
+    )
+
+    p.add_argument(
+        "-m", "--module",
+        required=True,
+        choices=["timeseries", "vision", "audio"],
+        help="AI module type.",
+    )
+
+    p.add_argument(
+        "--model1",
+        type=str,
+        required=True,
+        metavar="MODEL",
+        help="First model to compare (task type).",
+    )
+
+    p.add_argument(
+        "--model2",
+        type=str,
+        required=True,
+        metavar="MODEL",
+        help="Second model to compare (task type).",
+    )
+
+    p.add_argument(
+        "-d", "--device",
+        type=str,
+        default=None,
+        metavar="DEVICE",
+        help="Target device to filter results.",
+    )
+
+    p.add_argument(
+        "--all-models",
+        action="store_true",
+        help="Compare all available models for this module.",
     )
 
 def _add_help_parser(subparsers) -> None:
@@ -1260,6 +1408,8 @@ def main() -> None:
     _add_info_parser(subparsers)
     _add_analyze_parser(subparsers)
     _add_recommend_parser(subparsers)
+    _add_compare_parser(subparsers)
+    _add_diagnose_parser(subparsers)
     _add_deploy_parser(subparsers)
     _add_about_parser(subparsers)
     _add_shell_parser(subparsers)
@@ -1403,6 +1553,62 @@ def main() -> None:
         from mmcli.interactive import run_shell
         run_shell()
         sys.exit(0)
+
+    if args.command == "compare":
+        from mmcli.compare import compare_models, format_comparison
+
+        if args.all_models:
+            task_types = [
+                "generic_timeseries_classification",
+                "generic_timeseries_regression",
+                "generic_timeseries_forecasting",
+                "generic_timeseries_anomalydetection",
+            ]
+        else:
+            task_types = [args.model1, args.model2]
+
+        comparison = compare_models(
+            module_type=args.module,
+            task_types=task_types,
+            device=args.device,
+        )
+
+        print(format_comparison(comparison))
+        sys.exit(0)
+
+    if args.command == "diagnose":
+        from mmcli.diagnose import (
+            run_diagnostic_checks,
+            format_diagnostic_results,
+            get_fix_for_error
+        )
+
+        if args.error:
+            # Get fix for specific error
+            severity, suggestion = get_fix_for_error(args.error)
+
+            print("=" * 60)
+            print("ERROR FIX SUGGESTION")
+            print("=" * 60)
+            print(f"Error: {args.error}")
+            print("")
+            print(f"Severity: {severity.upper()}")
+            print(f"Suggestion: {suggestion}")
+            sys.exit(0)
+
+        else:
+            # Run full diagnostic
+            result = run_diagnostic_checks(full=args.full)
+
+            print(format_diagnostic_results(result))
+            print("")
+
+            if not result.is_healthy:
+                print("Some checks failed. Please address the issues above.")
+                sys.exit(1)
+
+            print("All checks passed! Your system is ready to use mmcli.")
+            sys.exit(0)
 
     _validate_args(args)
     config = build_config(args)

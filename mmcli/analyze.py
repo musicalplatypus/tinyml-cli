@@ -13,6 +13,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Import output formatting functions
+from mmcli.output import format_json, format_csv, format_yaml, format_table
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -201,6 +204,27 @@ def run_analyze(args) -> None:
             sys.exit(2)
 
     stats = analyse_dataset(dataset_path)
-    print_analysis(stats, dataset_path)
+
+    # Format output based on arguments
+    if args.format == "json":
+        output_text = format_json(stats)
+    elif args.format == "csv":
+        output_text = format_csv(stats)
+    elif args.format == "yaml":
+        output_text = format_yaml(stats)
+    else:
+        # Default to text format
+        print_analysis(stats, dataset_path)
+        if "error" in stats:
+            sys.exit(1)
+        return
+
+    # Write to file or stdout
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output_text)
+    else:
+        print(output_text)
+
     if "error" in stats:
         sys.exit(1)

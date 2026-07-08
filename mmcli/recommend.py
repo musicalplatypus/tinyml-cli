@@ -14,6 +14,9 @@ import sys
 import yaml
 from typing import Any, Optional
 
+# Import output formatting functions
+from mmcli.output import format_json, format_csv, format_yaml, format_table
+
 
 # ---------------------------------------------------------------------------
 # Schema loader (bundled schema.yaml)
@@ -411,6 +414,27 @@ def run_recommend(args) -> None:
         dataset_size_bucket=getattr(args, "dataset_size_bucket", None),
         modelzoo_path=modelzoo_path,
     )
-    print_recommendations(result, top_n=getattr(args, "top", 5))
+
+    # Format output based on arguments
+    if args.format == "json":
+        output_text = format_json(result)
+    elif args.format == "csv":
+        output_text = format_csv(result)
+    elif args.format == "yaml":
+        output_text = format_yaml(result)
+    else:
+        # Default to text format
+        print_recommendations(result, top_n=getattr(args, "top", 5))
+        if not result["success"]:
+            sys.exit(1)
+        return
+
+    # Write to file or stdout
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output_text)
+    else:
+        print(output_text)
+
     if not result["success"]:
         sys.exit(1)

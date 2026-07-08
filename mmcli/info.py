@@ -12,6 +12,9 @@ import subprocess
 import sys
 import textwrap
 
+# Import output formatting functions
+from mmcli.output import format_json, format_csv, format_yaml, format_table
+
 # ---------------------------------------------------------------------------
 # Query script template — executed in the MMCLI_PYTHON environment
 # ---------------------------------------------------------------------------
@@ -299,7 +302,24 @@ def run_info(args, python_exe: str) -> None:
         print(f"ERROR: {data['error']}", file=sys.stderr)
         sys.exit(1)
 
-    if task_type:
-        _print_task_details(data, task_type, target_device)
+    # Format output based on arguments
+    if args.format == "json":
+        output_text = format_json(data)
+    elif args.format == "csv":
+        output_text = format_csv(data)
+    elif args.format == "yaml":
+        output_text = format_yaml(data)
     else:
-        _print_task_list(data)
+        # Default to text format
+        if task_type:
+            _print_task_details(data, task_type, target_device)
+        else:
+            _print_task_list(data)
+        return
+
+    # Write to file or stdout
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output_text)
+    else:
+        print(output_text)
