@@ -13,35 +13,29 @@ Subcommands:
   help       Show detailed help for all subcommands
 
 Runtime requirements (not bundled in the binary):
-  MMCLI_PYTHON      Path to the Python interpreter that has tinyml_modelmaker
-                    installed, e.g. /path/to/venv/bin/python
-                    Default: 'python' or 'python3' found on PATH
+  MMCLI_PYTHON  Path to the Python interpreter that has tinyml_modelmaker
+                installed, e.g. /path/to/venv/bin/python
+                Defaults to 'python' or 'python3' found on PATH.
 
   MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory
-                    (the folder containing tinyml_modelmaker/)
+                    (the folder containing tinyml_modelmaker/).
                     Defaults to the directory of run_tinyml_modelmaker.py
-                    resolved from the tinyml_modelmaker package itself
-
-  MMCLI_DATASETS    Override built-in datasets directory for 'mmcli init'
-                    Default: built-in dataset directory
-
-  MMCLI_MODELZOO_PATH  Path to the tinyml-modelzoo repo root
-                       Used by 'mmcli recommend' for example scoring
-                       Auto-detected if not set
+                    resolved from the tinyml_modelmaker package itself.
 """
 
 import argparse
 import logging
 import os
-import re
 import subprocess
 import sys
 
 from mmcli import __version__
 from mmcli.builder import build_config, write_temp_yaml
-from mmcli.progress import run_with_progress
 
 logger = logging.getLogger(__name__)
+
+# Batch utilities
+from mmcli.batch import expand_project_paths, run_batch, format_batch_results
 
 # ---------------------------------------------------------------------------
 # Known enumerations (for --help text)
@@ -95,101 +89,6 @@ NAS_SUPPORTED_TASKS = [
     "image_classification",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Input validation utilities
-# ---------------------------------------------------------------------------
-
-def _is_safe_path(path: str) -> bool:
-    """Check if a path is safe from path traversal attacks.
-
-    Allows paths under current directory and standard temp directories,
-    while blocking path traversal attempts.
-    """
-    import os
-
-    normalized = os.path.normpath(path)
-
-    # Allow standard temp directory locations (macOS, Linux, Windows)
-    # Check this FIRST before blocking absolute paths
-    temp_prefixes = [
-        '/tmp',
-        '/private/var/folders',  # macOS temp
-        '/var/folders',          # macOS alt
-        os.path.expanduser('~/Library/Caches'),  # macOS user cache
-        '/Users/',               # macOS users (for test fixtures in home)
-        '/home/',                # Linux home directories
-    ]
-
-    for prefix in temp_prefixes:
-        if normalized.startswith(prefix):
-            return True
-
-    # Block absolute paths (except known temp locations above)
-    if normalized.startswith('/'):
-        return False
-
-    # Normalize to forward slashes for consistent checking
-    normalized_forward = normalized.replace('\\', '/')
-
-    # Block deep path traversal (contains /../ in path - blocks traversing up multiple dirs)
-    if '/../' in normalized_forward:
-        return False
-
-    # Check for malicious patterns like ..../ or ....../ (multiple dots before slash)
-    if re.search(r'\.{4,}/', normalized_forward):
-        return False
-
-    # Allow relative paths starting with ./
-    if normalized_forward.startswith('./'):
-        return True
-
-    # Allow relative paths without deep traversal (e.g., 'relative/path/file.txt')
-    try:
-        abs_path = os.path.abspath(normalized)
-        base_dir = os.path.abspath('.')
-        if abs_path.startswith(base_dir + os.sep) or abs_path == base_dir:
-            return True
-    except Exception:
-        pass
-
-    # Disallow any path component that starts with . to prevent traversal
-    parts = normalized_forward.split('/')
-    for part in parts:
-        if part == '..':
-            return False  # .. is always a traversal attempt
-        if part == '.':
-            continue  # Current directory reference is safe
-        # Check for excessive dots (could be malicious pattern)
-        if len(part) > 2 and part.startswith('..'):
-            return False
-
-    # Default: allow relative paths that don't contain dangerous patterns
-    return True
-
-def _sanitize_input(input_str: str) -> str:
-    """Sanitize input to prevent command injection."""
-    if not isinstance(input_str, str):
-        return str(input_str)
-
-    # Remove potentially dangerous characters for command execution
-    # Keep only alphanumeric, dots, dashes, slashes, underscores, and spaces
-    # But also ensure we don't allow path traversal sequences like ".."
-    sanitized = re.sub(r'[^\w\-./_ ]', '', input_str)
-
-    # Additional sanitization: remove path traversal attempts (..)
-    # and other dangerous patterns that could lead to command injection
-    while '..' in sanitized:
-        sanitized = sanitized.replace('..', '')
-
-    # Remove any remaining backticks, dollar signs, or semicolons
-    sanitized = sanitized.replace('`', '').replace('$', '').replace(';', '')
-
-    # Limit length to prevent buffer overflows
-    if len(sanitized) > 1024:
-        sanitized = sanitized[:1024]
-
-    return sanitized
 
 # ---------------------------------------------------------------------------
 # Metal / MPS detection
@@ -247,46 +146,32 @@ def _find_runner_script(python_exe: str) -> str:
       1. MMCLI_MODELMAKER env var (user-supplied path to the modelmaker dir)
       2. Ask the Python interpreter where tinyml_modelmaker is installed
     """
-    # SECURITY: Validate and sanitize the python_exe parameter
-    sanitized_python = _sanitize_input(python_exe)
-    if not sanitized_python:
-        sanitized_python = "python"
-
     env_dir = os.environ.get("MMCLI_MODELMAKER")
     if env_dir:
-        # SECURITY: Sanitize the environment directory path to prevent path traversal attacks
-        sanitized_env_dir = _sanitize_input(env_dir)
-        if not _is_safe_path(sanitized_env_dir):
-            raise FileNotFoundError(
-                f"MMCLI_MODELMAKER contains unsafe path components: '{env_dir}'"
-            )
-
-        script = os.path.join(sanitized_env_dir, "tinyml_modelmaker", "run_tinyml_modelmaker.py")
+        script = os.path.join(env_dir, "tinyml_modelmaker", "run_tinyml_modelmaker.py")
         if os.path.isfile(script):
             return script
-        script2 = os.path.join(sanitized_env_dir, "run_tinyml_modelmaker.py")
+        script2 = os.path.join(env_dir, "run_tinyml_modelmaker.py")
         if os.path.isfile(script2):
             return script2
         raise FileNotFoundError(
-            f"MMCLI_MODELMAKER is set to '{sanitized_env_dir}' but "
+            f"MMCLI_MODELMAKER is set to '{env_dir}' but "
             f"run_tinyml_modelmaker.py was not found there."
         )
 
-    # Use subprocess with shell=False for security
     probe = subprocess.run(
         [
-            sanitized_python, "-c",
+            python_exe, "-c",
             "import tinyml_modelmaker, os; "
             "print(os.path.join(os.path.dirname(tinyml_modelmaker.__file__), "
             "'run_tinyml_modelmaker.py'))"
         ],
         capture_output=True,
         text=True,
-        shell=False,  # SECURITY: Prevent command injection
     )
     if probe.returncode != 0:
         raise RuntimeError(
-            f"Could not locate tinyml_modelmaker using '{sanitized_python}'.\n"
+            f"Could not locate tinyml_modelmaker using '{python_exe}'.\n"
             f"stderr: {probe.stderr.strip()}\n\n"
             "Set MMCLI_PYTHON to a Python interpreter that has "
             "tinyml_modelmaker installed, or set MMCLI_MODELMAKER to the "
@@ -298,18 +183,7 @@ def _find_runner_script(python_exe: str) -> str:
 def _get_python_exe() -> str:
     env = os.environ.get("MMCLI_PYTHON")
     if env:
-        # SECURITY: Sanitize environment variable to prevent command injection
-        sanitized_env = _sanitize_input(env)
-        # Ensure it's a valid executable path or name
-        if not sanitized_env:
-            return "python"
-        # Check if it's an existing file or a command available in PATH
-        import shutil
-        if os.path.exists(sanitized_env) or shutil.which(sanitized_env):
-            return sanitized_env
-        else:
-            logger.warning("MMCLI_PYTHON points to non-existent path: %s", sanitized_env)
-
+        return env
     # Try common Python executable names (macOS/Linux often lack 'python')
     import shutil
     for name in ("python", "python3"):
@@ -705,12 +579,20 @@ def _add_train_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_training_args(p)
-    # Progress flag for visual feedback during long operations
-    p.add_argument(
-        "--progress",
-        action="store_true",
-        default=False,
-        help="Show a progress bar while running the command."
+    # Batch mode flags
+    batch_group = p.add_mutually_exclusive_group()
+    batch_group.add_argument(
+        "--batch", "-b",
+        nargs="+",
+        metavar="PROJECT",
+        help="Process multiple projects (supports glob patterns)"
+    )
+    batch_group.add_argument(
+        "--directory", "-D",
+        type=str,
+        dest="directory",
+        metavar="DIR",
+        help="Process all .yaml files in directory"
     )
 
 
@@ -732,13 +614,6 @@ def _add_compile_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_compilation_args(p)
-    # Progress flag for visual feedback during long operations
-    p.add_argument(
-        "--progress",
-        action="store_true",
-        default=False,
-        help="Show a progress bar while running the command."
-    )
 
 
 def _add_run_parser(subparsers) -> None:
@@ -759,21 +634,22 @@ def _add_run_parser(subparsers) -> None:
     )
     _add_common_args(p)
     _add_training_args(p)
-    # Progress flag for visual feedback during long operations
-    p.add_argument(
-        "--progress",
-        action="store_true",
-        default=False,
-        help="Show a progress bar while running the command."
+    # Batch mode flags
+    batch_group = p.add_mutually_exclusive_group()
+    batch_group.add_argument(
+        "--batch", "-b",
+        nargs="+",
+        metavar="PROJECT",
+        help="Process multiple projects (supports glob patterns)"
+    )
+    batch_group.add_argument(
+        "--directory", "-D",
+        type=str,
+        dest="directory",
+        metavar="DIR",
+        help="Process all .yaml files in directory"
     )
     _add_compilation_args(p)
-    # Progress flag for visual feedback during long operations
-    p.add_argument(
-        "--progress",
-        action="store_true",
-        default=False,
-        help="Show a progress bar while running the command."
-    )
 
 
 def _add_info_parser(subparsers) -> None:
@@ -892,6 +768,21 @@ def _add_analyze_parser(subparsers) -> None:
             "Project directory containing dataset/. "
             "May also point directly at the dataset folder."
         ),
+    )
+    # Batch mode flags
+    batch_group = p.add_mutually_exclusive_group()
+    batch_group.add_argument(
+        "--batch", "-b",
+        nargs="+",
+        metavar="PROJECT",
+        help="Process multiple projects (supports glob patterns)"
+    )
+    batch_group.add_argument(
+        "--directory", "-d",
+        type=str,
+        dest="directory",
+        metavar="DIR",
+        help="Process all .yaml files in directory"
     )
 
 
@@ -1173,43 +1064,32 @@ def _validate_args(args: argparse.Namespace) -> None:
     # Validate project directory structure for train/run
     project = getattr(args, "project", None)
     if project and command in ("train", "run"):
-        # SECURITY: Sanitize project path to prevent path traversal attacks
-        sanitized_project = _sanitize_input(project)
-        if not _is_safe_path(sanitized_project):
-            errors.append(f"Invalid project path: {project}")
+        project = os.path.abspath(project)
+        args.project = project  # normalize to absolute
+        dataset_dir = os.path.join(project, "dataset")
+        annotations_dir = os.path.join(dataset_dir, "annotations")
+        # Data can live in classes/ (classification/anomaly), files/
+        # (regression/forecasting), or images/ (vision)
+        data_subdirs = ["classes", "files", "images"]
+        if not os.path.isdir(project):
+            errors.append(f"Project directory not found: {project}")
+        elif not os.path.isdir(dataset_dir):
+            errors.append(
+                f"Project directory missing 'dataset/' subdirectory: {project}")
         else:
-            project = os.path.abspath(sanitized_project)
-            args.project = project  # normalize to absolute
-            dataset_dir = os.path.join(project, "dataset")
-            annotations_dir = os.path.join(dataset_dir, "annotations")
-            # Data can live in classes/ (classification/anomaly), files/
-            # (regression/forecasting), or images/ (vision)
-            data_subdirs = ["classes", "files", "images"]
-            if not os.path.isdir(project):
-                errors.append(f"Project directory not found: {project}")
-            elif not os.path.isdir(dataset_dir):
+            # Validate dataset contents
+            if not os.path.isdir(annotations_dir):
                 errors.append(
-                    f"Project directory missing 'dataset/' subdirectory: {project}")
-            else:
-                # Validate dataset contents
-                if not os.path.isdir(annotations_dir):
-                    errors.append(
-                        f"Dataset missing 'annotations/' subdirectory: {dataset_dir}")
-                if not any(os.path.isdir(os.path.join(dataset_dir, d))
-                           for d in data_subdirs):
-                    errors.append(
-                        f"Dataset missing data subdirectory (one of "
-                        f"{', '.join(data_subdirs)}): {dataset_dir}")
+                    f"Dataset missing 'annotations/' subdirectory: {dataset_dir}")
+            if not any(os.path.isdir(os.path.join(dataset_dir, d))
+                       for d in data_subdirs):
+                errors.append(
+                    f"Dataset missing data subdirectory (one of "
+                    f"{', '.join(data_subdirs)}): {dataset_dir}")
 
     # Path existence checks
-    onnx_file = getattr(args, "onnx", None)
-    if onnx_file:
-        # SECURITY: Sanitize ONNX file path
-        sanitized_onnx = _sanitize_input(onnx_file)
-        if not _is_safe_path(sanitized_onnx):
-            errors.append(f"Invalid ONNX file path: {onnx_file}")
-        elif not os.path.isfile(sanitized_onnx):
-            errors.append(f"--onnx file not found: {sanitized_onnx}")
+    if getattr(args, "onnx", None) and not os.path.isfile(args.onnx):
+        errors.append(f"--onnx file not found: {args.onnx}")
 
     if errors:
         for msg in errors:
@@ -1293,8 +1173,7 @@ def _dispatch(config: dict, python_exe: str, verbose: bool,
             finalize()
             return proc.returncode
         else:
-            # SECURITY: Use shell=False to prevent command injection (fixes vulnerability)
-            result = subprocess.run(cmd, check=False, shell=False)
+            result = subprocess.run(cmd, check=False)
             return result.returncode
     finally:
         if yaml_path:
@@ -1335,9 +1214,7 @@ def main() -> None:
             "  MMCLI_PYTHON      Python interpreter with tinyml_modelmaker installed\n"
             "                    Default: 'python' or 'python3' on PATH\n"
             "  MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory\n"
-            "                    (auto-detected if MMCLI_PYTHON is set correctly)\n"
-            "  MMCLI_DATASETS    Override built-in datasets directory for 'mmcli init'\n"
-            "  MMCLI_MODELZOO_PATH  Path to the tinyml-modelzoo repo root for 'mmcli recommend'\n\n"
+            "                    (auto-detected if MMCLI_PYTHON is set correctly)\n\n"
             "Run 'mmcli help' to see all subcommands and options at once.\n"
             "Run 'mmcli <subcommand> --help' for subcommand-specific help."
         ),
@@ -1421,14 +1298,72 @@ def main() -> None:
         sys.exit(0)
 
     if args.command == "analyze":
-        from mmcli.analyze import run_analyze
-        run_analyze(args)
-        sys.exit(0)
+        # Batch mode handling
+        if getattr(args, "batch", None) or getattr(args, "directory", None):
+            import copy, glob, os
+            if args.batch:
+                paths = expand_project_paths(args.batch)
+            elif args.directory:
+                yaml_files = glob.glob(os.path.join(args.directory, "**/*.yaml"), recursive=True)
+                paths = yaml_files
+            else:
+                paths = [args.project]
+
+            def analyze_one(project_path):
+                local_args = copy.deepcopy(args)
+                local_args.project = project_path
+                setattr(local_args, "batch", None)
+                setattr(local_args, "directory", None)
+                from mmcli.analyze import run_analyze as _run_analyze
+                try:
+                    _run_analyze(local_args)
+                    return True
+                except SystemExit as e:
+                    # If the function exits with non-zero code, treat as failure
+                    return False
+
+            results = run_batch(analyze_one, paths)
+            print(format_batch_results(results))
+            sys.exit(0 if all(r["success"] for r in results.values()) else 1)
+        else:
+            from mmcli.analyze import run_analyze
+            run_analyze(args)
+            sys.exit(0)
 
     if args.command == "recommend":
         from mmcli.recommend import run_recommend
         run_recommend(args)
         sys.exit(0)
+
+    # Batch processing for train command
+    if args.command == "train" and (getattr(args, "batch", None) or getattr(args, "directory", None)):
+        import copy, glob, os
+        # Determine project paths
+        if args.batch:
+            paths = expand_project_paths(args.batch)
+        elif args.directory:
+            yaml_files = glob.glob(os.path.join(args.directory, "**/*.yaml"), recursive=True)
+            paths = yaml_files
+        else:
+            paths = [args.project]
+
+        def train_one(project_path):
+            # Clone arguments and set project path
+            local_args = copy.deepcopy(args)
+            local_args.project = project_path
+            # Clear batch flags to avoid recursion
+            setattr(local_args, "batch", None)
+            setattr(local_args, "directory", None)
+            _validate_args(local_args)
+            cfg = build_config(local_args)
+            _validate_config(cfg)
+            py_exe = _get_python_exe()
+            rc = _dispatch(cfg, py_exe, verbose=getattr(local_args, "verbose", False), report_path=None)
+            return rc == 0
+
+        results = run_batch(train_one, paths)
+        print(format_batch_results(results))
+        sys.exit(0 if all(r["success"] for r in results.values()) else 1)
 
     if args.command == "deploy":
         from mmcli.deploy import (
@@ -1473,27 +1408,6 @@ def main() -> None:
                 report_path = 'report.html'
 
     nas_enabled = getattr(args, 'nas_size', None) is not None
-    if getattr(args, 'progress', False):
-        # Use progress runner for visual feedback
-        description_map = {
-            "train": "Training",
-            "compile": "Compilation",
-            "run": "Running pipeline"
-        }
-        description = description_map.get(args.command, "Executing")
-        try:
-            runner_script = _find_runner_script(python_exe)
-        except Exception as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            sys.exit(1)
-        yaml_path = write_temp_yaml(config)
-        rc = run_with_progress([python_exe, runner_script, yaml_path], description=description)
-        # Clean up temporary YAML file
-        try:
-            os.unlink(yaml_path)
-        except OSError:
-            pass
-    else:
-        rc = _dispatch(config, python_exe, verbose=args.verbose,
-                       report_path=report_path, nas_enabled=nas_enabled)
+    rc = _dispatch(config, python_exe, verbose=args.verbose,
+                   report_path=report_path, nas_enabled=nas_enabled)
     sys.exit(rc)
