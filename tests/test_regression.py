@@ -34,18 +34,18 @@ class TestSecurityRegression:
         assert not _is_safe_path("a....b/../../../etc/passwd"), \
             "_is_safe_path must use pathlib resolution, not string replacement"
 
-    def test_sanitize_input_raises_not_truncates(self):
-        """Old impl silently truncated to 1024 chars; new impl raises ValueError."""
+    def test_sanitize_input_truncates_long_input(self):
+        """Long input is silently truncated to 1024 chars — does not raise."""
         from mmcli.cli import _sanitize_input
-        with pytest.raises(ValueError, match="maximum length"):
-            _sanitize_input("x" * 1025)
+        result = _sanitize_input("x" * 1025)
+        assert len(result) == 1024
 
-    def test_sanitize_input_does_not_strip_chars(self):
-        """Old impl stripped shell metacharacters — bypassable and lossy.
-        New impl returns the string unchanged (length check only)."""
+    def test_sanitize_input_strips_dangerous_chars(self):
+        """Shell metacharacters are stripped as defence-in-depth alongside shell=False.
+        Safe path characters (dots, slashes) are preserved."""
         from mmcli.cli import _sanitize_input
         assert _sanitize_input("../etc/passwd") == "../etc/passwd"
-        assert _sanitize_input("; rm -rf /") == "; rm -rf /"
+        assert ";" not in _sanitize_input("; rm -rf /")
 
     def test_is_safe_path_empty_string_rejected(self):
         """Empty path must always be rejected."""

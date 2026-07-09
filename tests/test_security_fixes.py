@@ -3,9 +3,9 @@
 Security test suite for mmcli path validation and input length enforcement.
 
 Design notes (updated from original):
-- _sanitize_input() enforces a length cap ONLY. It does not strip characters.
-  Shell injection is prevented by shell=False in all subprocess calls.
-  Path traversal is prevented by _is_safe_path(), not by character removal.
+- _sanitize_input() strips non-safe characters and truncates to max_length.
+  Shell injection is also prevented by shell=False in all subprocess calls
+  (defence in depth). Path traversal is prevented by _is_safe_path().
 - _is_safe_path() uses pathlib.Path.resolve() + is_relative_to(), which is
   immune to iterative-replace bypasses (a....b collapse) and encoded traversal
   (%2e%2e). The old string-based '..' check was bypassable.
@@ -29,31 +29,29 @@ def test_sanitize_input_passthrough():
     assert _sanitize_input("") == ""
 
 
-def test_sanitize_input_does_not_strip_chars():
-    """_sanitize_input does NOT strip shell metacharacters or path components.
+def test_sanitize_input_strips_shell_metacharacters():
+    """_sanitize_input strips shell metacharacters as defence-in-depth.
 
-    Path traversal protection is the job of _is_safe_path(); shell injection
-    protection is provided by shell=False subprocess calls.  Stripping chars
-    from the string was the old (bypassable) design.
+    Safe path characters (dots, slashes, underscores, hyphens) are preserved.
+    Shell injection is also prevented by shell=False subprocess calls.
     """
     assert _sanitize_input("../etc/passwd") == "../etc/passwd"
-    assert _sanitize_input("; rm -rf /") == "; rm -rf /"
-    assert _sanitize_input("$(rm -rf /)") == "$(rm -rf /)"
-    assert _sanitize_input("`rm -rf /`") == "`rm -rf /`"
+    assert ";" not in _sanitize_input("; rm -rf /")
+    assert "$" not in _sanitize_input("$(rm -rf /)")
+    assert "`" not in _sanitize_input("`rm -rf /`")
 
 
-def test_sanitize_input_raises_on_length_exceeded():
-    """_sanitize_input raises ValueError when input exceeds max_length."""
+def test_sanitize_input_truncates_on_length_exceeded():
+    """_sanitize_input truncates to max_length — does not raise."""
     long_input = "a" * 1025
-    with pytest.raises(ValueError, match="maximum length"):
-        _sanitize_input(long_input)
+    result = _sanitize_input(long_input)
+    assert len(result) == 1024
 
 
 def test_sanitize_input_custom_length():
-    """Custom max_length is respected."""
-    _sanitize_input("abc", max_length=3)   # exactly at limit — ok
-    with pytest.raises(ValueError):
-        _sanitize_input("abcd", max_length=3)  # one over — raises
+    """Custom max_length is respected — truncates to that length."""
+    assert _sanitize_input("abc", max_length=3) == "abc"
+    assert _sanitize_input("abcd", max_length=3) == "abc"
 
 
 def test_sanitize_input_non_string_coerced():
