@@ -515,6 +515,19 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
         metavar="MULT",
         help="Max MSE increase tolerated for anomaly detection (default: 2.0).",
     )
+    group.add_argument(
+        "--quantization-mode",
+        dest="quantization_mode",
+        choices=["qat", "ptq"],
+        default=None,
+        metavar="MODE",
+        help=(
+            "Quantization training mode (requires --quantization QUANTIZATION_TINPU).\n"
+            "  qat  Quantization-aware training — learns quantization during training (default)\n"
+            "  ptq  Post-training quantization — quantizes after training completes\n"
+            "QAT generally produces higher accuracy; PTQ is faster."
+        ),
+    )
 
     # Performance optimization flags (advanced)
     perf = parser.add_argument_group("performance options (advanced)")
