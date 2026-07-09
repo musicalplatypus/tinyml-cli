@@ -18,12 +18,16 @@ Close the two HIGH-priority discoverability gaps found in the gap analysis:
 
 Both gaps are in `mmcli/cli.py` constants and help text — no backend changes needed.
 
+## Mode: TDD
+
+Wave ordering follows RED → GREEN discipline: tests written first (failing), then implementation.
+
 ## Plans
 
-| Plan | Type | Status |
-|------|------|--------|
-| 07-01-PLAN.md — Add F28E12 + audio task constants + help text | fix | PENDING |
-| 07-02-PLAN.md — Tests for device coverage and audio task discoverability | tdd | PENDING |
+| Plan | Wave | Type | Status |
+|------|------|------|--------|
+| 07-01-PLAN.md — TDD: write failing tests → add F28E12 + TASK_TYPES_AUDIO (RED→GREEN) | 1 | tdd | PENDING |
+| 07-02-PLAN.md — Regression guard: full suite verification | 2 | execute | PENDING |
 
 ## Success Criteria
 
