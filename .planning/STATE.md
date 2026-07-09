@@ -10,7 +10,7 @@ progress:
   total_plans: 26
   completed_plans: 31
   percent: 83
-stopped_at: Phase 08 complete (2/3) — ready to discuss Phase 09
+stopped_at: Phase 09 complete — all 3 phases (07, 08, 09) of v1.2 milestone done
 ---
 
 # Project State Summary
