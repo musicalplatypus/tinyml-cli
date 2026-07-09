@@ -212,3 +212,16 @@ Resumed from: Phase 2 UAT verification passed (118 tests), Phase 3 ready for exe
 All major phases complete. Ready for Phase 5 features:
 
 - **Phase 5**: New Features & UX (plans 05‑01 to 05‑06)
+
+## Accumulated Context
+
+### Pending Todos
+
+6 todos captured 2026-07-09 from test suite failures found after installing updated modelmaker in venv-tinyml:
+
+1. Fix sanitization test expectations for raises-only design (12 failing tests — testing)
+2. Fix yaml.py stub safe_load to accept string input (3 dry-run E2E failures — general)
+3. Add format attribute to MockArgs in test_recommend.py (1 test — testing)
+4. Fix _is_safe_path traversal detection for edge cases (2 tests — general)
+5. Investigate MPS float64 crash from tinyml_tinyverse update (7 E2E errors — general, upstream regression)
+6. Update test_no_pca_images for new modelmaker PCA behavior (1 test — testing)
