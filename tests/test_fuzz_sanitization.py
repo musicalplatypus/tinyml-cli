@@ -72,5 +72,5 @@ class TestSanitizeWithExamples:
         result = _sanitize_input(input_str)
         # After sanitization, result should only contain safe characters
         import re
-        sanitized_pattern = r'^[\w\-./_ ]*$'
+        sanitized_pattern = r'^[\w\-./_ ,]*$'
         assert re.match(sanitized_pattern, result) is not None

@@ -98,6 +98,101 @@ mmcli init --list [-t TASK] [-m MODULE]
 | `--task` | `-t` | Task type (required for extraction) |
 | `--dataset` | | Name of the example dataset (required for extraction) |
 | `--project` | `-p` | Path for the new project directory (required for extraction) |
+
+### `mmcli analyze` — analyze project datasets
+
+Analyze a project's dataset/ directory and report sample count, class distribution, sequence length, and size bucket.
+
+```
+mmcli analyze -i PROJECT_DIR [--format FORMAT] [-o OUTPUT_FILE]
+```
+
+**Phase 5 Features:**
+- `--format json|csv|yaml` - Export analysis results in specified format
+- `-o FILE` - Write output to file instead of stdout
+
+### `mmcli info` — show supported devices, models, and presets
+
+Query the model registry and display available options.
+
+```
+mmcli info -m MODULE [-t TASK_TYPE] [-d DEVICE] [--format FORMAT] [-o OUTPUT_FILE]
+```
+
+**Phase 5 Features:**
+- `--format json|csv|yaml` - Export information in specified format
+- `-o FILE` - Write output to file instead of stdout
+
+### `mmcli recommend` — recommend models and FE presets
+
+Score every tinyml-modelzoo example against your task, device, and variables to recommend the best-matching models.
+
+```
+mmcli recommend -t TASK_TYPE -d DEVICE [--format FORMAT] [-o OUTPUT_FILE] [OPTIONS]
+```
+
+**Phase 5 Features:**
+- `--format json|csv|yaml` - Export recommendations in specified format
+- `-o FILE` - Write output to file instead of stdout
+
+### `mmcli compare` — compare multiple models
+
+Compare model configurations to find the best fit for your needs.
+
+```
+mmcli compare -m MODULE --model1 MODEL1 --model2 MODEL2 [--device DEVICE] [--format FORMAT] [-o OUTPUT_FILE]
+```
+
+**Phase 5 Features:**
+- `--format json|csv|yaml` - Export comparison results in specified format
+- `-o FILE` - Write output to file instead of stdout
+
+### `mmcli diagnose` — run diagnostic checks
+
+Run diagnostic checks to identify common issues.
+
+```
+mmcli diagnose [--full] [--error MESSAGE] [--format FORMAT] [-o OUTPUT_FILE]
+```
+
+**Phase 5 Features:**
+- `--full` - Run extended diagnostics (includes disk space, etc.)
+- `--error MESSAGE` - Get fix suggestion for a specific error message  
+- `--format json|csv|yaml` - Export diagnostic results in specified format
+- `-o FILE` - Write output to file instead of stdout
+
+### `mmcli train` — train a model and export ONNX
+
+Train a model using the tinyml-modelmaker pipeline.
+
+```
+mmcli train -m MODULE -t TASK_TYPE -d DEVICE [-n MODEL_NAME] -i PROJECT_DIR [--progress]
+```
+
+**Phase 5 Features:**
+- `--progress` - Display progress bar during training
+
+### `mmcli compile` — compile an ONNX file
+
+Compile a pre-trained ONNX model for a target microcontroller.
+
+```
+mmcli compile -m MODULE -t TASK_TYPE -d DEVICE [-n MODEL_NAME] -o OUTPUT_FILE [--progress]
+```
+
+**Phase 5 Features:**
+- `--progress` - Display progress bar during compilation
+
+### `mmcli run` — full pipeline: train then compile
+
+Run the full tinyml-modelmaker pipeline.
+
+```
+mmcli run -m MODULE -t TASK_TYPE -d DEVICE [-n MODEL_NAME] -i PROJECT_DIR [--progress]
+```
+
+**Phase 5 Features:**
+- `--progress` - Display progress bar during training and compilation
 | `--module` | `-m` | AI module (auto-detected from dataset if omitted) |
 
 **Examples:**
