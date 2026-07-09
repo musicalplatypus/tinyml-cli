@@ -1,6 +1,43 @@
 # Roadmap
 
-## v1.0 Milestone — Core Functionality & Security (in progress)
+## v1.2 Milestone — Ecosystem Gap Closure (next)
+
+**Phases:** 7-9  
+**Source:** Gap analysis against tinyml-tensorlab (2026-07-09)
+
+### Phase 7: Device & Task Coverage
+**Goal:** Close two HIGH-priority discoverability gaps: missing `F28E12` device and invisible `audio_classification` task type.
+
+**Depends on:** Phase 6 (complete)
+
+**Plans:** 2 plans
+
+- [ ] 07-01-PLAN.md — Add F28E12 to TARGET_DEVICES + TASK_TYPES_AUDIO constant + help text
+- [ ] 07-02-PLAN.md — Tests for device coverage and audio task discoverability
+
+### Phase 8: Dataset Preset Selection
+**Goal:** Expose `dataset_name` preset selection via `--dataset-preset` flag on train/run; extend `mmcli info` to list dataset presets.
+
+**Depends on:** Phase 7
+
+**Plans:** 2 plans
+
+- [ ] 08-01-PLAN.md — Add --dataset-preset flag + builder.py wiring
+- [ ] 08-02-PLAN.md — Extend mmcli info with dataset preset listing + tests
+
+### Phase 9: Advanced Training Knobs
+**Goal:** Expose `nn_for_feature_extraction`, `gof_test`, and QAT/PTQ mode selection as CLI flags.
+
+**Depends on:** Phase 8
+
+**Plans:** 2 plans
+
+- [ ] 09-01-PLAN.md — Add --nn-feature-extraction + --gof-test flags + builder wiring
+- [ ] 09-02-PLAN.md — Add --quantization-mode flag + tests for all three knobs
+
+---
+
+## v1.0 Milestone — Core Functionality & Security (complete)
 
 **Phases:** 1-5
 
