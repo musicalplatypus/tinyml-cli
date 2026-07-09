@@ -98,6 +98,15 @@ if task_type:
             fe_presets.append(name)
     result["fe_presets"] = fe_presets
 
+    # --- Dataset presets ---
+    if task_type:
+        try:
+            params = training.ModelRunner.init_params()
+            dataset_preset_descs = training.ModelRunner.get_dataset_preset_descriptions(params)
+            result["dataset_presets"] = list(dataset_preset_descs.keys())
+        except Exception:
+            result["dataset_presets"] = []
+
 print(json.dumps(result))
 ''')
 
@@ -262,6 +271,13 @@ def _print_task_details(data: dict, task_type: str,
             print(f"  {p}")
     else:
         print("  (none found)")
+
+    # --- Dataset Presets ---
+    dataset_presets = data.get("dataset_presets", [])
+    if dataset_presets:
+        print(f"\nDataset Presets --dataset-preset ({len(dataset_presets)} available):")
+        for p in sorted(dataset_presets):
+            print(f"  {p}")
 
     # --- Example Datasets ---
     from mmcli.datasets import list_datasets
