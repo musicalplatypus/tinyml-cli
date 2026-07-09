@@ -384,6 +384,27 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     group.add_argument(
+        "--nn-feature-extraction",
+        dest="nn_feature_extraction",
+        action="store_true",
+        default=False,
+        help=(
+            "Use a trainable neural network as the feature extractor instead of\n"
+            "the default classical signal-processing pipeline (FFT bins, etc.).\n"
+            "Timeseries tasks only. Increases model size and training time."
+        ),
+    )
+    group.add_argument(
+        "--gof-test",
+        dest="gof_test",
+        action="store_true",
+        default=False,
+        help=(
+            "Run a goodness-of-fit statistical test on the feature distribution\n"
+            "during training. Timeseries tasks only. Adds minor compute overhead."
+        ),
+    )
+    group.add_argument(
         "--epochs",
         type=int,
         default=None,

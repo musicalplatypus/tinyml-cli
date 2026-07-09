@@ -182,6 +182,12 @@ def build_config(args) -> dict:
          getattr(args, "dataset_preset", None),
          )
 
+    if getattr(args, "nn_feature_extraction", False):
+        config["data_processing_feature_extraction"]["nn_for_feature_extraction"] = True
+
+    if getattr(args, "gof_test", False):
+        config["data_processing_feature_extraction"]["gof_test"] = True
+
     # --- training ---
     _set(config, "training", "model_name", getattr(args, "model", None))
     _set(config, "training", "training_epochs", getattr(args, "epochs", None))
