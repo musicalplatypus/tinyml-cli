@@ -95,9 +95,11 @@ TASK_TYPES_TIMESERIES = [
 
 TASK_TYPES_VISION = ["image_classification"]
 
+TASK_TYPES_AUDIO = ["audio_classification"]
+
 TARGET_DEVICES = [
     # C2000
-    "F280013", "F280015", "F28003", "F28004", "F2837",
+    "F280013", "F280015", "F28003", "F28004", "F2837", "F28E12",
     "F28P55", "F28P65", "F29H85", "F29P58", "F29P32",
     # MSPM0
     "MSPM0G3507", "MSPM0G3519", "MSPM0G5187",
@@ -265,7 +267,9 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
             "  arc_fault  ecg_classification  motor_fault\n"
             "  blower_imbalance  pir_detection\n"
             "Vision tasks:\n"
-            "  image_classification"
+            "  image_classification\n"
+            "Audio tasks:\n"
+            "  audio_classification"
         ),
     )
     parser.add_argument(
@@ -275,7 +279,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Target microcontroller device (required unless provided via --config).\n"
             "C2000:     F280013  F280015  F28003  F28004  F2837\n"
-            "           F28P55  F28P65  F29H85  F29P58  F29P32\n"
+            "           F28E12  F28P55  F28P65  F29H85  F29P58  F29P32\n"
             "MSPM0:     MSPM0G3507  MSPM0G3519  MSPM0G5187\n"
             "           MSPM33C32  MSPM33C34\n"
             "SimpleLink: CC1312  CC1314  CC1352  CC1354  CC2755  CC35X1\n"

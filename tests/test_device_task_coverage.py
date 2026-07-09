@@ -24,8 +24,9 @@ class TestF28E12Device:
         assert "F28E12" in result.stdout
 
     def test_deploy_help_lists_f28e12(self):
+        # deploy is a sub-dispatcher; device choices appear in subcommand help
         result = subprocess.run(
-            [sys.executable, "-m", "mmcli", "deploy", "--help"],
+            [sys.executable, "-m", "mmcli", "deploy", "check-sdk", "--help"],
             capture_output=True, text=True,
         )
         assert result.returncode == 0
