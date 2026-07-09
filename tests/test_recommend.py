@@ -304,6 +304,7 @@ class TestRunRecommend:
             modelzoo_path = None
             variables = None
             dataset_size_bucket = None
+            format = None
 
         args = MockArgs()
 
@@ -327,6 +328,7 @@ class TestRunRecommend:
             modelzoo_path = None
             variables = None
             dataset_size_bucket = None
+            format = None
 
         args = MockArgs()
 

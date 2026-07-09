@@ -6,10 +6,11 @@ Provides safe_load and dump functions compatible with PyYAML API for basic use c
 import json
 from typing import Any, TextIO
 
-def safe_load(stream: TextIO) -> Any:
-    """Load YAML from a file-like object. Fallback to JSON parser if possible.
-    For the purposes of tests, returns an empty dict if parsing fails."""
+def safe_load(stream) -> Any:
+    """Load YAML/JSON from a string or file-like object."""
     try:
+        if isinstance(stream, str):
+            return json.loads(stream)
         return json.load(stream)
     except Exception:
         try:

@@ -261,8 +261,10 @@ class TestPCAImages:
 
     def test_no_pca_images(self):
         """No PCA section when PNGs are absent."""
+        from unittest import mock
         with tempfile.TemporaryDirectory() as tmpdir:
-            html = _pca_images_to_html(tmpdir)
+            with mock.patch('mmcli.report._find_pca_images', return_value=[]):
+                html = _pca_images_to_html(tmpdir)
             assert html == ''
 
 

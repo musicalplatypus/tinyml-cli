@@ -41,20 +41,27 @@ from mmcli.batch import expand_project_paths, run_batch, format_batch_results
 # Security helpers (restored from Phase 1; removed in Phase 5 eb0a1bd)
 # ---------------------------------------------------------------------------
 
+import re
 import tempfile
 from pathlib import Path
+
+_SAFE_INPUT_PATTERN = re.compile(r'[^\w\-./_ ,]', re.UNICODE)
 
 
 def _is_safe_path(path: str, base_dir=None) -> bool:
     """Return True if *path* resolves under *base_dir* (default: cwd) or the OS temp dir.
 
-    Uses pathlib.resolve() — immune to iterative-replace bypasses and encoded traversal.
-    Shell metacharacters in paths are irrelevant because all subprocess calls use shell=False.
+    Normalises Windows separators before resolution so backslash traversals are
+    caught on Unix too.  Paths with 3+ consecutive dots are rejected as
+    ambiguous traversal-like patterns.
     """
     if not path or not path.strip():
         return False
+    normalized = path.replace("\\", "/")
+    if re.search(r'\.{3,}', normalized):
+        return False
     try:
-        resolved = Path(path).resolve()
+        resolved = Path(normalized).resolve()
         anchor = Path(base_dir).resolve() if base_dir else Path.cwd()
         if resolved.is_relative_to(anchor):
             return True
@@ -64,15 +71,15 @@ def _is_safe_path(path: str, base_dir=None) -> bool:
 
 
 def _sanitize_input(input_str: str, max_length: int = 1024) -> str:
-    """Enforce a length cap. Raises ValueError if exceeded. Does NOT strip chars.
+    """Strip non-safe characters and truncate to *max_length*.
 
-    Shell injection is prevented by shell=False in subprocess calls, not char-stripping.
+    Keeps word characters, hyphens, dots, slashes, underscores, spaces, and
+    commas.  Shell injection is also prevented by shell=False in all subprocess
+    calls (defence in depth).
     """
     if not isinstance(input_str, str):
         input_str = str(input_str)
-    if len(input_str) > max_length:
-        raise ValueError(f"Input exceeds maximum length of {max_length}")
-    return input_str
+    return _SAFE_INPUT_PATTERN.sub('', input_str)[:max_length]
 
 
 # ---------------------------------------------------------------------------
