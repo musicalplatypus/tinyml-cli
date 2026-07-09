@@ -176,6 +176,11 @@ def build_config(args) -> dict:
         "feature_extraction_name",
         getattr(args, "feature_extraction", None),
     )
+    _set(config,
+         "dataset",
+         "dataset_name",
+         getattr(args, "dataset_preset", None),
+         )
 
     # --- training ---
     _set(config, "training", "model_name", getattr(args, "model", None))

@@ -373,6 +373,17 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     group.add_argument(
+        "--dataset-preset",
+        dest="dataset_preset",
+        metavar="PRESET",
+        default=None,
+        help=(
+            "Dataset preset name. Default: 'default'.\n"
+            "Use 'mmcli info -m <module> -t <task>' to list available presets.\n"
+            "Examples: motor_fault_sample, arc_fault_sample"
+        ),
+    )
+    group.add_argument(
         "--epochs",
         type=int,
         default=None,
