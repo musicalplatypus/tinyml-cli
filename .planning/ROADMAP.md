@@ -10,10 +10,10 @@
 
 **Depends on:** Phase 6 (complete)
 
-**Plans:** 2 plans
+**Plans:** 2/3 plans executed
 
-- [ ] 07-01-PLAN.md — Add F28E12 to TARGET_DEVICES + TASK_TYPES_AUDIO constant + help text
-- [ ] 07-02-PLAN.md — Tests for device coverage and audio task discoverability
+- [x] 07-01-PLAN.md — Add F28E12 to TARGET_DEVICES + TASK_TYPES_AUDIO constant + help text
+- [x] 07-02-PLAN.md — Tests for device coverage and audio task discoverability
 
 ### Phase 8: Dataset Preset Selection
 **Goal:** Expose `dataset_name` preset selection via `--dataset-preset` flag on train/run; extend `mmcli info` to list dataset presets.
