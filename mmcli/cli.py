@@ -53,53 +53,26 @@ def _is_safe_path(path: str, base_dir=None) -> bool:
     """
     if not path or not path.strip():
         return False
-
-    # Normalize path separators for cross-platform compatibility
-    normalized_path = path.replace('\\', '/')
-
-    # Check for explicit directory traversal patterns
-    if '..' in normalized_path:
-        # If we have .. components, check that they don't lead outside safe directories
-        try:
-            resolved = Path(path).resolve()
-            anchor = Path(base_dir).resolve() if base_dir else Path.cwd()
-            if resolved.is_relative_to(anchor):
-                return True
-            temp_root = Path(tempfile.gettempdir()).resolve()
-            return resolved.is_relative_to(temp_root)
-        except (ValueError, OSError):
-            return False
-    else:
-        # No traversal patterns, just check normal path resolution
-        try:
-            resolved = Path(path).resolve()
-            anchor = Path(base_dir).resolve() if base_dir else Path.cwd()
-            if resolved.is_relative_to(anchor):
-                return True
-            temp_root = Path(tempfile.gettempdir()).resolve()
-            return resolved.is_relative_to(temp_root)
-        except (ValueError, OSError):
-            return False
+    try:
+        resolved = Path(path).resolve()
+        anchor = Path(base_dir).resolve() if base_dir else Path.cwd()
+        if resolved.is_relative_to(anchor):
+            return True
+        return resolved.is_relative_to(Path(tempfile.gettempdir()).resolve())
+    except (ValueError, OSError):
+        return False
 
 
 def _sanitize_input(input_str: str, max_length: int = 1024) -> str:
-    """Enforce a length cap on user-supplied strings and sanitize for shell injection.
+    """Enforce a length cap. Raises ValueError if exceeded. Does NOT strip chars.
 
-    Raises ValueError if the input exceeds *max_length*.  Removes dangerous
-    shell metacharacters to prevent command injection.
+    Shell injection is prevented by shell=False in subprocess calls, not char-stripping.
     """
     if not isinstance(input_str, str):
         input_str = str(input_str)
     if len(input_str) > max_length:
         raise ValueError(f"Input exceeds maximum length of {max_length}")
-
-    # Remove dangerous shell metacharacters that could enable command injection
-    sanitized = input_str
-    dangerous_chars = [';', '$', '`', '|', '&', '>', '<', '(', ')', '{', '}']
-    for char in dangerous_chars:
-        sanitized = sanitized.replace(char, '')
-
-    return sanitized
+    return input_str
 
 
 # ---------------------------------------------------------------------------
