@@ -20,10 +20,10 @@
 
 **Depends on:** Phase 7
 
-**Plans:** 2 plans
+**Plans:** 2/3 plans executed
 
-- [ ] 08-01-PLAN.md — Add --dataset-preset flag + builder.py wiring
-- [ ] 08-02-PLAN.md — Extend mmcli info with dataset preset listing + tests
+- [x] 08-01-PLAN.md — Add --dataset-preset flag + builder.py wiring
+- [x] 08-02-PLAN.md — Extend mmcli info with dataset preset listing + tests
 
 ### Phase 9: Advanced Training Knobs
 **Goal:** Expose `nn_for_feature_extraction`, `gof_test`, and QAT/PTQ mode selection as CLI flags.
