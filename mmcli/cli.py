@@ -647,7 +647,7 @@ def _add_train_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "train",
         help="Train a model and export ONNX. Compilation is skipped.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Train a model using the tinyml-modelmaker pipeline.\n"
             "Outputs model.onnx in the project run directory.\n"
@@ -694,7 +694,7 @@ def _add_compile_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "compile",
         help="Compile an existing ONNX file. Training is skipped.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Compile a pre-trained ONNX model for a target microcontroller.\n"
             "No training data or training step is required.\n\n"
@@ -721,7 +721,7 @@ def _add_run_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "run",
         help="Full pipeline: train then compile.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Run the full tinyml-modelmaker pipeline:\n"
             "  1. Train the model (using Metal/MPS on macOS if available)\n"
@@ -764,7 +764,7 @@ def _add_info_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "info",
         help="Show supported devices, models, and feature extraction presets.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Query the model registry and display available options.\n\n"
             "Examples:\n"
@@ -811,7 +811,7 @@ def _add_init_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "init",
         help="Create a new project from an example dataset.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Initialise a new project directory from a bundled example\n"
             "dataset.  The dataset zip is extracted into the project so\n"
@@ -882,7 +882,7 @@ def _add_analyze_parser(subparsers) -> None:
             "  mmcli analyze -i ./my-project --format json\n"
             "  mmcli analyze -i ./my-project -o results.csv\n"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     p.add_argument(
         "-i", "--project",
@@ -940,7 +940,7 @@ def _add_recommend_parser(subparsers) -> None:
             "  mmcli recommend -t arc_fault -d F28P55 --format yaml\n"
             "  mmcli recommend -t classification -d F28P55 -o recommendations.json\n"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     req = p.add_argument_group("required")
     req.add_argument(
@@ -1028,7 +1028,7 @@ def _add_deploy_parser(subparsers) -> None:
             "  build       Headless CCS build (requires CCS 12+)\n"
             "  flash       Flash compiled .out to device via dslite"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     sub = p.add_subparsers(dest="deploy_subcommand", metavar="DEPLOY_SUBCOMMAND")
     sub.required = True
@@ -1052,7 +1052,7 @@ def _add_deploy_parser(subparsers) -> None:
             "Validate that all 4 files needed for CCS project creation exist:\n"
             "  mod.a, tvmgen_default.h, test_vector.c, user_input_config.h"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     art_p.add_argument("-t", "--task", required=True, metavar="TASK_TYPE",
                        help="Task type string (e.g. motor_fault).")
@@ -1157,7 +1157,7 @@ def _add_diagnose_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "diagnose",
         help="Run diagnostic checks to troubleshoot issues.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Run diagnostic checks to identify common issues.\n\n"
             "Examples:\n"
@@ -1187,7 +1187,7 @@ def _add_compare_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "compare",
         help="Compare multiple models side-by-side.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Compare model availability and attributes across task types.\n\n"
             "Examples:\n"
@@ -1492,7 +1492,7 @@ def main() -> None:
             "Run 'mmcli help' to see all subcommands and options at once.\n"
             "Run 'mmcli <subcommand> --help' for subcommand-specific help."
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"mmcli {__version__}")
     parser.add_argument(
