@@ -117,6 +117,12 @@ TARGET_DEVICES = [
     "AM263", "AM263P", "AM261", "AM13E2",
 ]
 
+# C2000 DSP targets require the C2000 CGT (cl2000); all other targets use tiarmclang.
+_C2000_DEVICES: frozenset = frozenset([
+    "F280013", "F280015", "F28003", "F28004", "F2837", "F28E12",
+    "F28P55", "F28P65", "F29H85", "F29P58", "F29P32",
+])
+
 QUANTIZATION_OPTIONS = ["NO_QUANTIZATION", "QUANTIZATION_TINPU"]
 
 TRAINING_DEVICES = ["auto", "mps", "cuda", "cpu"]
@@ -237,6 +243,54 @@ def _get_python_exe() -> str:
         if shutil.which(name):
             return name
     return "python"  # fallback, will produce a clear error
+
+
+def _detect_compile_tools(python_exe: str) -> tuple:
+    """Probe for the tools required by the compilation pipeline.
+
+    Returns (tvm_available, tiarmclang_path_or_None, c2000_cgt_path_or_None).
+
+    tvm is checked by asking *python_exe* to import it — it lives in the
+    tinyml_modelmaker venv, not necessarily the CLI's own interpreter.
+
+    tiarmclang (ARM targets) is resolved from (in priority order):
+      1. $ARM_LLVM_CGT_PATH/bin/tiarmclang  (env var set by the installer)
+      2. shutil.which('tiarmclang')           (on PATH)
+
+    cl2000 (C2000 targets) is resolved from (in priority order):
+      1. $C2000_CG_ROOT/bin/cl2000           (env var set by the installer)
+      2. shutil.which('cl2000')               (on PATH)
+    """
+    import shutil as _shutil
+
+    # --- TVM (NPU compiler, required for all targets) ---
+    tvm_probe = subprocess.run(
+        [python_exe, "-c", "import tvm"],
+        capture_output=True,
+    )
+    tvm_available = tvm_probe.returncode == 0
+
+    # --- tiarmclang (ARM Cortex-M / SimpleLink / Sitara targets) ---
+    tiarmclang_path = None
+    env_arm = os.environ.get("ARM_LLVM_CGT_PATH")
+    if env_arm:
+        candidate = os.path.join(env_arm, "bin", "tiarmclang")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            tiarmclang_path = candidate
+    if tiarmclang_path is None:
+        tiarmclang_path = _shutil.which("tiarmclang")
+
+    # --- cl2000 (C2000 DSP targets) ---
+    c2000_cgt_path = None
+    env_c2000 = os.environ.get("C2000_CG_ROOT")
+    if env_c2000:
+        candidate = os.path.join(env_c2000, "bin", "cl2000")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            c2000_cgt_path = candidate
+    if c2000_cgt_path is None:
+        c2000_cgt_path = _shutil.which("cl2000")
+
+    return tvm_available, tiarmclang_path, c2000_cgt_path
 
 
 # ---------------------------------------------------------------------------
@@ -705,8 +759,11 @@ def _add_compile_parser(subparsers) -> None:
         description=(
             "Compile a pre-trained ONNX model for a target microcontroller.\n"
             "No training data or training step is required.\n\n"
-            "Note: compilation requires ti_mcu_nnc (Linux/Windows only).\n"
-            "On macOS: train here, then compile on Linux.\n\n"
+            "Note: compilation requires ti_mcu_nnc (TVM) plus a device-family compiler:\n"
+            "  • C2000 targets (F28xxx/F29xxx): cl2000  (set C2000_CG_ROOT)\n"
+            "  • ARM targets (MSPM0, CC, AM):   tiarmclang (set ARM_LLVM_CGT_PATH)\n"
+            "Supported on Linux, Windows, and macOS.\n"
+            "Run 'mmcli diagnose' to check whether they are available.\n\n"
             "Example:\n"
             "  mmcli compile -m timeseries -t generic_timeseries_classification \\\n"
             "                -d F28P55 -n CLS_1k_NPU \\\n"
@@ -734,7 +791,11 @@ def _add_run_parser(subparsers) -> None:
             "  1. Train the model (using Metal/MPS on macOS if available)\n"
             "  2. Export model.onnx\n"
             "  3. Compile for the target device\n\n"
-            "Note: compilation requires ti_mcu_nnc (Linux/Windows only).\n\n"
+            "Note: compilation requires ti_mcu_nnc (TVM) plus a device-family compiler:\n"
+            "  • C2000 targets (F28xxx/F29xxx): cl2000  (set C2000_CG_ROOT)\n"
+            "  • ARM targets (MSPM0, CC, AM):   tiarmclang (set ARM_LLVM_CGT_PATH)\n"
+            "Supported on Linux, Windows, and macOS.\n"
+            "Run 'mmcli diagnose' to check whether they are available.\n\n"
             "Example:\n"
             "  mmcli run -m timeseries -t generic_timeseries_classification \\\n"
             "            -d F28P55 -n CLS_1k_NPU -i ./my_project\n\n"
@@ -1483,7 +1544,7 @@ def main() -> None:
             "Subcommands:\n"
             "  init       Create a new project from an example dataset\n"
             "  train      Train a model and export ONNX (uses Metal/MPS on macOS)\n"
-            "  compile    Compile an existing ONNX file (Linux/Windows only)\n"
+            "  compile    Compile an existing ONNX file (requires ti_mcu_nnc + tiarmclang)\n"
             "  run        Full pipeline: train then compile\n"
             "  info       Show supported devices, models, and presets\n"
             "  analyze    Analyse a project dataset (size, classes, sequence length)\n"
@@ -1738,6 +1799,42 @@ def main() -> None:
         sys.exit(0)
 
     python_exe = _get_python_exe()
+
+    # Gate compilation on tool availability (platform-independent check).
+    if config.get("compilation", {}).get("enable"):
+        tvm_ok, tiarmclang_path, c2000_cgt_path = _detect_compile_tools(python_exe)
+        target_device = config.get("common", {}).get("target_device", "")
+        is_c2000 = target_device in _C2000_DEVICES
+        missing = []
+        if not tvm_ok:
+            missing.append(
+                "  • ti_mcu_nnc (TVM): not importable from the Python environment.\n"
+                "    Install ti-mcu-nnc into the environment pointed to by MMCLI_PYTHON,\n"
+                "    or set MMCLI_PYTHON to an interpreter that has it installed."
+            )
+        if is_c2000 and not c2000_cgt_path:
+            missing.append(
+                f"  • cl2000 (C2000 CGT): not found on PATH or via C2000_CG_ROOT.\n"
+                f"    Required for C2000 target '{target_device}'.\n"
+                f"    Install the C2000 Code Generation Tools and either add its bin/ to\n"
+                f"    PATH or set C2000_CG_ROOT to its root directory."
+            )
+        elif not is_c2000 and not tiarmclang_path:
+            missing.append(
+                f"  • tiarmclang: not found on PATH or via ARM_LLVM_CGT_PATH.\n"
+                f"    Required for ARM target '{target_device}'.\n"
+                f"    Install the ARM LLVM toolchain and either add its bin/ to PATH\n"
+                f"    or set ARM_LLVM_CGT_PATH to its root directory."
+            )
+        if missing:
+            print(
+                "ERROR: Compilation requested but required tools are missing:\n"
+                + "\n".join(missing)
+                + "\n\nCompilation is supported on any platform where these tools are "
+                "installed.\nTo train only (no compilation), use 'mmcli train' instead.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Determine report output path if --report is enabled
     report_path = None

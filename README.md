@@ -24,10 +24,19 @@ create a project and start training with a single command.
 This means `tinyml_modelmaker` runs in your existing Python 3.10 environment with all
 its native dependencies (including MPS/Metal for macOS training).
 
-> **Note on compilation (macOS):** `mmcli compile` and `mmcli run` work on macOS
-> for C2000-family targets (F28P55, F28P65, etc.) when the TI C2000 CGT is installed
-> and `C2000_CG_ROOT` points to the installation directory (see
-> [Environment variables](#environment-variables) below).
+> **Compilation on macOS:** `mmcli compile` and `mmcli run` are fully supported on
+> macOS. Compilation always requires **ti_mcu_nnc (TVM)** for the NPU stage, plus a
+> device-family compiler that depends on the target:
+>
+> | Target family | Devices | Compiler | Env var |
+> |---|---|---|---|
+> | C2000 DSP | F28xxx, F29xxx | `cl2000` | `C2000_CG_ROOT` |
+> | ARM Cortex-M / SimpleLink / Sitara | MSPM0, CC, AM | `tiarmclang` | `ARM_LLVM_CGT_PATH` |
+>
+> Set the env var to the toolchain root; mmcli resolves the binary at `<root>/bin/<compiler>`.
+> Falls back to `PATH` if the env var is not set. Run `mmcli diagnose` to verify tool
+> detection before running a compile job.
+>
 > On macOS ARM64, the process may exit with code 245 after the pipeline completes —
 > this is a known crash in the onnxsim C extension during Python shutdown and does
 > not affect output artifacts (`compilation/artifacts/mod.a` is written before it).
@@ -320,7 +329,12 @@ mmcli train \
 
 ### `mmcli compile` — compile only
 
-Compile a pre-trained ONNX file. No training data needed.
+Compile a pre-trained ONNX file. No training data needed. Supported on Linux, Windows,
+and macOS. Requires **ti_mcu_nnc (TVM)** plus a device-family compiler:
+- **C2000 targets** (F28xxx/F29xxx): `cl2000` — set `C2000_CG_ROOT`
+- **ARM targets** (MSPM0, CC, AM): `tiarmclang` — set `ARM_LLVM_CGT_PATH`
+
+Run `mmcli diagnose` to verify tool availability.
 
 ```
 mmcli compile -m MODULE -t TASK -d DEVICE -n MODEL -o ONNX_FILE [options]
@@ -346,7 +360,10 @@ mmcli compile \
 
 ### `mmcli run` — full pipeline
 
-Train then compile. Accepts all flags from both `train` and `compile`.
+Train then compile. Accepts all flags from both `train` and `compile`. Compilation
+requires **ti_mcu_nnc (TVM)** plus a device-family compiler (see `mmcli compile` above).
+Supported on Linux, Windows, and macOS. Run `mmcli diagnose` to verify tools before
+running.
 
 ```bash
 mmcli run \
@@ -717,6 +734,7 @@ that has `tinyml_modelmaker`.
 | `MMCLI_PYTHON` | `python` or `python3` on PATH | Python interpreter with `tinyml_modelmaker` installed |
 | `MMCLI_MODELMAKER` | auto-detected | Path to tinyml-modelmaker source dir (only needed if auto-detection fails) |
 | `MMCLI_DATASETS` | bundled `example_datasets/` | Override directory containing example dataset zips |
+| `ARM_LLVM_CGT_PATH` | (none) | Root of the ARM LLVM toolchain. When set, `mmcli` looks for `tiarmclang` at `$ARM_LLVM_CGT_PATH/bin/tiarmclang`. Falls back to `PATH` if unset. Required for compilation when tiarmclang is not on `PATH`. |
 | `C2000_CG_ROOT` | `~/bin/ti-cgt-c2000_*` | Root of the TI C2000 CGT installation. Required for compilation of C2000 targets (F28P55, F28P65, etc.) on all platforms. Download from [TI's website](https://www.ti.com/tool/C2000-CGT). |
 
 ---

@@ -13,9 +13,10 @@ Known macOS constraints (annotated per-assertion):
   - MPS fake-quantize: aten::_fake_quantize_per_tensor_affine_cachemask_tensor_qparams
     not implemented for MPS. Requires PYTORCH_ENABLE_MPS_FALLBACK=1.
   - onnxsim crash: onnxsim_cpp2py_export.cpython-310-darwin.so crashes with
-    SIGSEGV (exit 245) during Python interpreter shutdown on macOS ARM64. The
-    crash is a null pointer dereference inside onnxsim's C++ cleanup — it occurs
-    AFTER the full pipeline completes, so all artifacts are present on disk.
+    SIGSEGV during Python interpreter shutdown on macOS ARM64. The crash fires
+    AFTER onnx export but BEFORE packaging and compilation. Fixed in
+    quant_base._simplify_onnx_model: on darwin/arm64 onnxsim runs in a subprocess,
+    so a crash there cannot propagate to the main process.
   - cl2000 cross-compiler: TI C2000 CGT 25.11.1.LTS is installed at
     ~/ti/ti-cgt-c2000_25.11.1.LTS. Set C2000_CG_ROOT so modelmaker finds it.
 
@@ -129,10 +130,11 @@ class TestEndToEnd:
         # 3. Run — 1 epoch, no auto-quantization (Hessian fails on CPU/MPS).
         #
         #    macOS onnxsim constraint: onnxsim_cpp2py_export.cpython-310-darwin.so
-        #    crashes (SIGSEGV, exit 245 = -11 mod 256) during Python interpreter
-        #    shutdown on macOS ARM64. The crash is a null pointer dereference inside
-        #    onnxsim's C++ cleanup — it fires AFTER the full pipeline completes, so
-        #    all artifacts are present. We verify correctness through artifact presence.
+        #    segfaults (SIGSEGV) during Python interpreter shutdown on macOS ARM64.
+        #    The crash fires after ONNX export but before packaging and compilation,
+        #    so WITHOUT a fix artifacts would be absent. quant_base._simplify_onnx_model
+        #    now runs onnxsim in a subprocess on darwin/arm64 — the subprocess may crash,
+        #    but the main process continues to packaging and compilation unaffected.
         rc, out, err = _run(
             "run",
             "-m", self.MODULE,
@@ -147,7 +149,7 @@ class TestEndToEnd:
             "--batch-size", "64",
             "--feature-extraction", self.FE_PRESET,
             capture=False,
-            timeout=600,
+            timeout=1800,
         )
         # 245 = -11 mod 256 = SIGSEGV from onnxsim C++ cleanup during Python shutdown.
         # All pipeline artifacts are written before the crash hits.

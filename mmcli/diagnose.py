@@ -145,6 +145,97 @@ def check_path_permission(path: str, description: str) -> DiagnosticIssue:
         )
 
 
+def check_tvm_compiler() -> DiagnosticIssue:
+    """Check whether TVM (ti_mcu_nnc) is importable for compilation."""
+    try:
+        import tvm  # noqa: F401
+        return DiagnosticIssue(
+            name="TVM (ti_mcu_nnc)",
+            severity="warning",
+            status="pass",
+            message="TVM is installed and importable — compilation is available",
+        )
+    except ImportError:
+        return DiagnosticIssue(
+            name="TVM (ti_mcu_nnc)",
+            severity="warning",
+            status="fail",
+            message="TVM is not importable; 'compile' and 'run' commands will not work",
+            fix_suggestion=(
+                "Install ti-mcu-nnc into the environment pointed to by MMCLI_PYTHON.\n"
+                "If using a separate venv, set MMCLI_PYTHON to that interpreter."
+            ),
+        )
+
+
+def check_tiarmclang() -> DiagnosticIssue:
+    """Check whether tiarmclang (TI ARM cross-compiler) is available."""
+    import shutil
+
+    candidate = None
+    env_cgt = os.environ.get("ARM_LLVM_CGT_PATH")
+    if env_cgt:
+        path = os.path.join(env_cgt, "bin", "tiarmclang")
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            candidate = path
+    if candidate is None:
+        candidate = shutil.which("tiarmclang")
+
+    if candidate:
+        return DiagnosticIssue(
+            name="tiarmclang (ARM cross-compiler)",
+            severity="warning",
+            status="pass",
+            message=f"tiarmclang found at {candidate}",
+        )
+    else:
+        return DiagnosticIssue(
+            name="tiarmclang (ARM cross-compiler)",
+            severity="warning",
+            status="fail",
+            message="tiarmclang not found — device-family compilation unavailable",
+            fix_suggestion=(
+                "Install the TI ARM LLVM toolchain and either:\n"
+                "  • Add its bin/ directory to PATH, or\n"
+                "  • Set ARM_LLVM_CGT_PATH to the toolchain root directory."
+            ),
+        )
+
+
+def check_c2000_compiler() -> DiagnosticIssue:
+    """Check whether the C2000 CGT (cl2000) is available for C2000-family targets."""
+    import shutil
+
+    candidate = None
+    env_root = os.environ.get("C2000_CG_ROOT")
+    if env_root:
+        path = os.path.join(env_root, "bin", "cl2000")
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            candidate = path
+    if candidate is None:
+        candidate = shutil.which("cl2000")
+
+    if candidate:
+        return DiagnosticIssue(
+            name="cl2000 (C2000 CGT)",
+            severity="warning",
+            status="pass",
+            message=f"cl2000 found at {candidate}",
+        )
+    else:
+        return DiagnosticIssue(
+            name="cl2000 (C2000 CGT)",
+            severity="warning",
+            status="fail",
+            message="cl2000 not found — compilation for C2000 targets (F28xxx/F29xxx) unavailable",
+            fix_suggestion=(
+                "Install the C2000 Code Generation Tools and either:\n"
+                "  • Add its bin/ directory to PATH, or\n"
+                "  • Set C2000_CG_ROOT to the toolchain root directory."
+            ),
+        )
+
+
 def run_diagnostic_checks(full: bool = False) -> DiagnosticResult:
     """Run all diagnostic checks."""
     checks = [
@@ -152,6 +243,9 @@ def run_diagnostic_checks(full: bool = False) -> DiagnosticResult:
         check_environment_var("MMCLI_PYTHON", "MMCLI_PYTHON"),
         check_environment_var("MMCLI_MODELZOO_PATH", "MMCLI_MODELZOO_PATH"),
         check_tinyml_modelmaker(),
+        check_tvm_compiler(),
+        check_tiarmclang(),
+        check_c2000_compiler(),
     ]
 
     if full:
