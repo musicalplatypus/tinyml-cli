@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: "2026-07-22T19:09:35.790Z"
+last_updated: "2026-07-22T19:39:07.922Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -198,7 +198,7 @@ Test infrastructure is being established with centralized fixtures in conftest.p
 
 ## Session Continuity
 
-Last session: 2026-07-22T19:07:56.218Z
+Last session: 2026-07-22T19:39:07.916Z
 Resumed from: Phase 2 UAT verification passed (118 tests), Phase 3 ready for execution
 
 **Phase 2 Status:** COMPLETE ✅  
@@ -234,20 +234,66 @@ COMPLETE.**
   tinyml_torchmodelopt, tinyml_modelzoo, tvm, matplotlib, scipy, sklearn, onnx, onnxruntime),
   read by all three build scripts (`build_macos.sh`, `build_linux.sh`, `build_windows.ps1`)
   instead of each carrying its own copy.
+
 - `scripts/binary_size_ceiling.txt`: single-source CI size ceiling, `152043520` (145 MiB
   interim, while the dataset payload is still bundled — 10-03 lowers it to `15728640`).
+
 - `tests/test_build_config.py`: 15 source-level regression tests; verified by deliberately
   breaking two named failure modes (removing a module from the shared list; breaking
   `build_windows.ps1`'s `Get-Content` read) and confirming the suite failed, then restored.
+
 - Real `bash build_macos.sh` run (macOS arm64): 145,388,496 bytes (138.6 MB), under the
   152,043,520-byte ceiling, 17 mmcli modules bundled. `--version`, `init --list`,
   `info -m timeseries`, `analyze`, and `diagnose` all verified working against the built
   binary.
+
 - `pwsh` is not installed on this machine; `build_windows.ps1` was verified at the
   source-assertion level only, not by the PowerShell parser.
+
 - Commits: `4704b57` (shared exclude list + all three scripts), `41b8ec1` (ceiling +
   regression test).
+
 - See `.planning/phases/10-dataset-distribution-and-binary-size/10-01-SUMMARY.md` for full
+  detail.
+
+**Plan 10-02 — Registry digests/versioning, version-scoped cache, verified `fetch_dataset` —
+COMPLETE.**
+
+- `mmcli/datasets.py`: the nine TI-fetchable `DATASET_REGISTRY` entries gained `ti_name`,
+  `ti_version` (per-entry override), `sha256`, and `bytes`, matching the measured provenance
+  table in `10-RESEARCH.md` verbatim. `generic_audio_classification` kept `sha256`/`bytes`
+  but no `ti_name` (no TI upstream). Import-time `_validate_registry()` makes a `ti_name`
+  entry without a valid digest a hard import failure (REQ-DATA-02).
+
+- Added `dataset_url(name)` (version-pathed TI URL, `KeyError` on unknown name),
+  `_cache_dir(version)` (XDG_CACHE_HOME-aware, version-keyed), `_resolve_dataset_zip(name)`
+  (MMCLI_DATASETS → bundled → version cache → None, wrapping the existing `_datasets_dir()`
+  rather than replacing it), and `fetch_dataset(name, *, force=False)` (stdlib
+  `urllib.request` only; atomic download-verify-`os.replace()`; refuses when
+  `MMCLI_DATASETS` is set or the URL is not HTTPS; guards truncated/oversized bodies,
+  cross-host redirects, HTTP 404, and connect/read timeouts).
+
+- Added `stderr_is_tty()`, the single TTY predicate 10-06 will reuse for its `init --dataset`
+  auto-fetch policy (D-5) instead of writing a second `isatty()` check.
+
+- `extract_dataset()` now resolves its zip path through `_resolve_dataset_zip()`; existing
+  callers of `_datasets_dir()` are unaffected.
+
+- `tests/test_datasets_download.py` (new, 668 lines, 44 tests): registry invariants, URL
+  derivation, cache/resolution order, a zip-slip confirmation test (T-10-02-06), and the full
+  `fetch_dataset`/`_download_to_cache` failure-mode matrix against a local `http.server`.
+  Verified passing with all non-loopback network access blocked at the socket layer (no test
+  contacts `software-dl.ti.com`).
+
+- One deviation (Rule 3): `_download_to_cache` initially only caught `urllib.error.URLError`
+  around `opener.open()`; a socket-level timeout while reading the response status line
+  surfaces as a raw `OSError`/`TimeoutError` instead, so an `except OSError` clause was added
+  before committing Task 3.
+
+- Commits: `aa33ba4` (Task 1 — registry/URL), `e075dc3` (Task 2 — cache/resolution),
+  `95b8f90` (Task 3 — fetch_dataset).
+
+- See `.planning/phases/10-dataset-distribution-and-binary-size/10-02-SUMMARY.md` for full
   detail.
 
 ### Pending Todos
