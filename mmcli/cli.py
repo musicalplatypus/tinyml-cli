@@ -935,6 +935,98 @@ def _add_init_parser(subparsers) -> None:
     )
 
 
+def _add_datasets_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "datasets",
+        help="List, fetch, and locate example datasets.",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description=(
+            "Manage the example datasets used by 'mmcli init'.\n\n"
+            "  list   Show every dataset with its size and availability state\n"
+            "  pull   Download and sha256-verify a dataset (cache short-circuits)\n"
+            "  path   Print the resolved on-disk path for a dataset\n\n"
+            "Examples:\n"
+            "  mmcli datasets list\n"
+            "  mmcli datasets list --format json\n"
+            "  mmcli datasets pull fan_blade_fault\n"
+            "  mmcli datasets path generic_audio_classification\n\n"
+            "Set MMCLI_DATASETS to override the built-in datasets directory\n"
+            "(disables fetching entirely, see REQ-DATA-03)."
+        ),
+    )
+    sub = p.add_subparsers(dest="datasets_subcommand", metavar="DATASETS_SUBCOMMAND")
+    sub.required = True
+
+    list_p = sub.add_parser(
+        "list",
+        help="List datasets with size, version, and availability state.",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description=(
+            "List every registered dataset. Human table by default.\n\n"
+            "'state' is one of:\n"
+            "  bundled       resolves via MMCLI_DATASETS or the packaged directory\n"
+            "  cached        resolves from ~/.cache/mmcli/datasets/<version>/\n"
+            "  downloadable  has a TI source but is not present locally\n"
+            "  unavailable   neither present nor fetchable"
+        ),
+    )
+    list_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text). 'json' is a committed interface.",
+    )
+    list_p.add_argument(
+        "-t", "--task",
+        default=None,
+        metavar="TASK_TYPE",
+        help="Filter by task type.",
+    )
+    list_p.add_argument(
+        "-m", "--module",
+        default=None,
+        choices=MODULES,
+        metavar="MODULE",
+        help="Filter by module.",
+    )
+
+    pull_p = sub.add_parser(
+        "pull",
+        help="Download and sha256-verify a dataset.",
+        description=(
+            "Fetch a dataset from TI and cache it. If a verified copy is\n"
+            "already cached, no network request is made unless --force is\n"
+            "given. Refused when MMCLI_DATASETS is set (REQ-DATA-03)."
+        ),
+    )
+    pull_p.add_argument(
+        "dataset_name",
+        metavar="DATASET_NAME",
+        help="Name of the dataset to fetch (see 'mmcli datasets list').",
+    )
+    pull_p.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Re-download and re-verify even if a valid copy is already cached.",
+    )
+
+    path_p = sub.add_parser(
+        "path",
+        help="Print the resolved on-disk path for a dataset.",
+        description=(
+            "Print the path mmcli would use for this dataset right now\n"
+            "(MMCLI_DATASETS -> bundled -> cache), or exit non-zero if it\n"
+            "is not available locally."
+        ),
+    )
+    path_p.add_argument(
+        "dataset_name",
+        metavar="DATASET_NAME",
+        help="Name of the dataset to locate (see 'mmcli datasets list').",
+    )
+
+
 def _add_analyze_parser(subparsers) -> None:
     p = subparsers.add_parser(
         "analyze",
@@ -1312,6 +1404,161 @@ def _add_help_parser(subparsers) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `datasets` subcommand — list/pull/path (Phase 10 Plan 06)
+#
+# This section never reimplements download, verification, cache-resolution
+# or TTY-detection logic: everything network- or cache-related is imported
+# directly from mmcli.datasets (10-02). Only CLI presentation and the D-5
+# auto-fetch policy for `init --dataset` live here.
+# ---------------------------------------------------------------------------
+
+def _dataset_state(name: str) -> str:
+    """Classify *name*'s current on-disk availability into one of four
+    states, computed through 10-02's own resolution function
+    (`_resolve_dataset_zip`) so the CLI and `init` can never disagree:
+
+      bundled       resolves via MMCLI_DATASETS or the packaged directory
+      cached        resolves from the version-scoped download cache
+      downloadable  has a `ti_name` (a TI source) but is not present locally
+      unavailable   neither present nor fetchable right now
+
+    A dataset that resolved from MMCLI_DATASETS but is absent from it is
+    reported `unavailable`, not `downloadable`: `fetch_dataset` refuses
+    unconditionally while that variable is set (REQ-DATA-03), so it is not
+    actually fetchable in this environment even though it has a `ti_name`.
+    """
+    from mmcli.datasets import DATASET_REGISTRY, _datasets_dir, _resolve_dataset_zip
+
+    meta = DATASET_REGISTRY[name]
+    zip_path = _resolve_dataset_zip(name)
+    if zip_path is not None:
+        primary_dir = os.path.normpath(_datasets_dir())
+        if os.path.normpath(os.path.dirname(zip_path)) == primary_dir:
+            return "bundled"
+        return "cached"
+
+    if os.environ.get("MMCLI_DATASETS"):
+        return "unavailable"
+    if meta.get("ti_name"):
+        return "downloadable"
+    return "unavailable"
+
+
+def _dataset_record(name: str) -> dict:
+    """Build one JSON/table record for *name*.
+
+    Field set (`name`, `version`, `state`, `bytes`, plus descriptive fields)
+    is a committed cross-repo interface — PlatypusStudio (plan 10-04) decodes
+    it as `DatasetCatalog.swift`. Do not rename or remove these keys without
+    updating that consumer.
+    """
+    from mmcli.datasets import DATASET_REGISTRY, DATASETS_DEFAULT_VERSION
+
+    meta = DATASET_REGISTRY[name]
+    version = None
+    if meta.get("ti_name"):
+        version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
+    return {
+        "name": name,
+        "version": version,
+        "state": _dataset_state(name),
+        "bytes": meta.get("bytes", 0),
+        "task_types": meta.get("task_types", []),
+        "module": meta.get("module"),
+        "description": meta.get("description", ""),
+    }
+
+
+def _handle_datasets_list(args: argparse.Namespace) -> None:
+    from mmcli.datasets import DATASET_REGISTRY
+
+    records = []
+    for name in sorted(DATASET_REGISTRY.keys()):
+        meta = DATASET_REGISTRY[name]
+        if args.task and args.task not in meta.get("task_types", []):
+            continue
+        if args.module and meta.get("module") != args.module:
+            continue
+        records.append(_dataset_record(name))
+
+    if args.format == "json":
+        from mmcli.output import format_json
+        print(format_json({"datasets": records}))
+        return
+
+    if not records:
+        filters = []
+        if args.task:
+            filters.append(f"task={args.task}")
+        if args.module:
+            filters.append(f"module={args.module}")
+        print(f"No datasets found matching: {', '.join(filters)}")
+        return
+
+    max_name = max(len(r["name"]) for r in records)
+    max_state = max(len(r["state"]) for r in records)
+    print("\nExample datasets:\n")
+    hdr = (f" {'Dataset':<{max_name}}  {'State':<{max_state}}  "
+           f"{'Size':>10}  Description")
+    print(hdr)
+    print("─" * len(hdr))
+    for r in records:
+        size_mb = r["bytes"] / (1024 * 1024)
+        print(f" {r['name']:<{max_name}}  {r['state']:<{max_state}}  "
+              f"{size_mb:>7.1f} MB  {r['description']}")
+    print(f"\n{len(records)} dataset(s). "
+          f"'mmcli datasets pull <name>' fetches; "
+          f"'mmcli datasets path <name>' locates on disk.\n")
+
+
+def _handle_datasets_pull(args: argparse.Namespace) -> None:
+    from mmcli.datasets import DATASET_REGISTRY, fetch_dataset
+
+    name = args.dataset_name
+    if name not in DATASET_REGISTRY:
+        available = ", ".join(sorted(DATASET_REGISTRY.keys()))
+        print(
+            f"ERROR: Unknown dataset '{name}'.\n"
+            f"Available datasets: {available}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    try:
+        path = fetch_dataset(name, force=args.force)
+    except (KeyError, RuntimeError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"✓ '{name}' available at: {path}")
+
+
+def _handle_datasets_path(args: argparse.Namespace) -> None:
+    from mmcli.datasets import DATASET_REGISTRY, _resolve_dataset_zip
+
+    name = args.dataset_name
+    if name not in DATASET_REGISTRY:
+        available = ", ".join(sorted(DATASET_REGISTRY.keys()))
+        print(
+            f"ERROR: Unknown dataset '{name}'.\n"
+            f"Available datasets: {available}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    path = _resolve_dataset_zip(name)
+    if path is None:
+        print(
+            f"ERROR: '{name}' is not available locally.\n"
+            f"Run `mmcli datasets pull {name}` to fetch it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(path)
+
+
+# ---------------------------------------------------------------------------
 # Full help printer
 # ---------------------------------------------------------------------------
 
@@ -1543,6 +1790,7 @@ def main() -> None:
             "mmcli — command-line interface for tinyml-modelmaker\n\n"
             "Subcommands:\n"
             "  init       Create a new project from an example dataset\n"
+            "  datasets   List, fetch, and locate example datasets\n"
             "  train      Train a model and export ONNX (uses Metal/MPS on macOS)\n"
             "  compile    Compile an existing ONNX file (requires ti_mcu_nnc + tiarmclang)\n"
             "  run        Full pipeline: train then compile\n"
@@ -1580,6 +1828,7 @@ def main() -> None:
     subparsers.required = True
 
     _add_init_parser(subparsers)
+    _add_datasets_parser(subparsers)
     _add_train_parser(subparsers)
     _add_compile_parser(subparsers)
     _add_run_parser(subparsers)
@@ -1635,6 +1884,15 @@ def main() -> None:
             project_path=args.project,
             task_type=args.task,
         )
+        sys.exit(0)
+
+    if args.command == "datasets":
+        if args.datasets_subcommand == "list":
+            _handle_datasets_list(args)
+        elif args.datasets_subcommand == "pull":
+            _handle_datasets_pull(args)
+        elif args.datasets_subcommand == "path":
+            _handle_datasets_path(args)
         sys.exit(0)
 
     if args.command == "info":
