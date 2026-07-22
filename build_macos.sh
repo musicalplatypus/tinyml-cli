@@ -38,6 +38,21 @@ python -c "import mmcli; print(mmcli.__file__)"
 # Clean previous build artifacts
 rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}/dist/mmcli" "${SCRIPT_DIR}/mmcli.spec"
 
+# mmcli drives the training engine through MMCLI_PYTHON as a subprocess; it never needs
+# the engine in its own address space. But a handful of `import tinyml_modelmaker` /
+# `import tvm` probes sit in try/except fallbacks, and PyInstaller's static analysis
+# follows them, dragging in torch, TVM and the whole engine — a ~10 MB launcher became
+# 260 MB with a 6.5 s startup. Excluding them keeps those probes as the no-ops they
+# already handle. numpy and pandas stay: analyze.py genuinely uses them.
+EXCLUDES=(
+    torch torchvision torchaudio
+    tinyml_modelmaker tinyml_tinyverse tinyml_torchmodelopt tinyml_modelzoo
+    tvm
+    matplotlib scipy sklearn onnx onnxruntime
+)
+EXCLUDE_ARGS=()
+for m in "${EXCLUDES[@]}"; do EXCLUDE_ARGS+=(--exclude-module "$m"); done
+
 pyinstaller \
     --onefile \
     --name mmcli \
@@ -45,6 +60,7 @@ pyinstaller \
     --paths "${SCRIPT_DIR}" \
     --collect-submodules mmcli \
     --add-data "${SCRIPT_DIR}/mmcli/example_datasets:mmcli/example_datasets" \
+    "${EXCLUDE_ARGS[@]}" \
     "${SCRIPT_DIR}/mmcli/__main__.py"
 
 # Verify the binary contains mmcli modules
