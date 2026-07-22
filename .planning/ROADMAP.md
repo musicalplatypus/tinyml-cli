@@ -68,16 +68,17 @@ and updated without rebuilding the binary.
   dataset obligations of cutting a release and why they exist
 
 **Depends on:** Phase 9
-**Plans:** 2/9 plans executed
+**Plans:** 3/10 plans executed
 
 Plans:
 - [x] 10-01-PLAN.md — wave 1 — Enforce PyInstaller exclusions in all three build scripts + single-source size ceiling (REQ-SIZE-01/02)
 - [x] 10-02-PLAN.md — wave 2 — Registry digests/versioning, version-scoped cache, verified `fetch_dataset` (REQ-DATA-01/02/03/05)
 - [ ] 10-03-PLAN.md — wave 3 — GET-and-hash gate over all nine TI URLs, then unbundle (REQ-SIZE-01, REQ-DATA-04/05)
-- [ ] 10-06-PLAN.md — wave 3 — `mmcli datasets list/pull/path` + D-5 auto-fetch policy (REQ-DATA-01/03, REQ-UX-01)
+- [x] 10-06-PLAN.md — wave 3 — `mmcli datasets list/pull/path` + D-5 auto-fetch policy (REQ-DATA-01/03, REQ-UX-01)
 - [ ] 10-04-PLAN.md — wave 4 — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
 - [ ] 10-05-PLAN.md — wave 4 — README, ten-dataset offline recipe, executed as written (REQ-DOC-01, REQ-DATA-03/04)
 - [ ] 10-08-PLAN.md — wave 4 — Wire the new regression guards into CI + per-artifact size and empty-bundle gates (REQ-SIZE-01/02)
+- [ ] 10-09-PLAN.md — wave 5 — PlatypusStudio standalone dataset library + `mmcli datasets remove`, cross-repo (REQ-UX-02)
 - [ ] 10-07-PLAN.md — wave 5 — docs/RELEASING.md, CLI help, Sphinx (REQ-DOC-01, REQ-DATA-05)
 
 ---
