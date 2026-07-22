@@ -16,6 +16,7 @@ new fetchable entry, you must add both fields or the module will refuse to
 import.
 """
 
+import hashlib
 import os
 import sys
 import zipfile
@@ -43,11 +44,54 @@ def _datasets_dir() -> str:
     Priority:
       1. MMCLI_DATASETS env var
       2. mmcli/example_datasets/ (bundled with the package)
+
+    This function's behaviour is unchanged by the fetch/cache mechanism added
+    alongside it — `_resolve_dataset_zip()` wraps this rather than replacing
+    it, so any existing caller of `_datasets_dir()` keeps working exactly as
+    before.
     """
     env = os.environ.get("MMCLI_DATASETS")
     if env and os.path.isdir(env):
         return env
     return os.path.join(os.path.dirname(__file__), "example_datasets")
+
+
+def _cache_dir(version: str) -> str:
+    """Return the version-scoped cache directory for downloaded datasets,
+    creating it (mode 0700) if it does not already exist.
+
+    Honours XDG_CACHE_HOME, falling back to ~/.cache. Resolves to
+    ``<cache-home>/mmcli/datasets/<version>/``.
+
+    The version is part of the path *deliberately*: a flat, version-less
+    cache would let bumping DATASETS_DEFAULT_VERSION (or an entry's
+    ti_version override) silently reuse a dataset downloaded under an older
+    TI release — exactly the failure D-3 (10-RESEARCH.md) exists to prevent.
+    Two versions therefore always cache independently.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+    path = os.path.join(base, "mmcli", "datasets", version)
+    os.makedirs(path, exist_ok=True)
+    try:
+        # os.makedirs's mode= argument is masked by umask, so set the
+        # permission explicitly rather than relying on it.
+        os.chmod(path, 0o700)
+    except OSError:  # pragma: no cover - best effort, e.g. on some CI runners
+        pass
+    return path
+
+
+def _sha256_of(path: str) -> str:
+    """Return the hex sha256 digest of the file at *path*, read in chunks."""
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +250,75 @@ def dataset_url(name: str) -> str | None:
 
 
 
+def _resolve_dataset_zip(name: str) -> str | None:
+    """Resolve the on-disk path for *name*'s zip, or ``None`` if it is not
+    available anywhere (the caller — `extract_dataset` or the CLI — decides
+    whether to fetch it).
+
+    Resolution order:
+      1. MMCLI_DATASETS env var (existing offline/air-gap escape hatch)
+      2. bundled example_datasets/ (existing, wraps `_datasets_dir()`)
+      3. ~/.cache/mmcli/datasets/<version>/ (new — previously downloaded)
+
+    The cache sits *below* the env var and the bundled directory
+    deliberately: a user who pointed MMCLI_DATASETS at an air-gapped or
+    reproducible dataset directory must never be silently overridden by a
+    cached copy, and a bundled zip (shipped with the package) is preferred
+    over a cache entry for the same reason existing behaviour did not
+    consult a cache at all.
+
+    Digest verification is asymmetric on purpose: files resolved through
+    MMCLI_DATASETS are **not** digest-checked, because that directory is
+    explicitly user-managed and may legitimately hold a locally prepared
+    substitute dataset (REQ-DATA-03). Cache hits **are** re-verified against
+    the registry sha256 on every resolution, not only at download time,
+    because the cache directory may be writable by another process or user
+    that can plant a file there — re-hashing costs tens of milliseconds
+    against a download that costs seconds. A cache file that fails
+    verification is treated as absent (not returned) and reported to
+    stderr, never used.
+    """
+    meta = DATASET_REGISTRY.get(name)
+    if meta is None:
+        return None
+    filename = meta["filename"]
+
+    # Steps 1-2: MMCLI_DATASETS env var, then bundled example_datasets/.
+    # _datasets_dir() already implements exactly this precedence as a single
+    # directory choice; we look inside it for the specific file rather than
+    # replacing its logic.
+    primary_dir = _datasets_dir()
+    candidate = os.path.join(primary_dir, filename)
+    if os.path.isfile(candidate):
+        return candidate
+
+    env = os.environ.get("MMCLI_DATASETS")
+    if env and os.path.isdir(env):
+        # MMCLI_DATASETS is set and is a real directory, but does not hold
+        # this file. It is the user's authoritative, explicitly configured
+        # source — do not fall through to the cache, which would silently
+        # override an air-gapped setup with a network-fetched copy.
+        return None
+
+    # Step 3: version-scoped cache, digest-verified on every hit.
+    version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
+    cache_path = os.path.join(_cache_dir(version), filename)
+    if os.path.isfile(cache_path):
+        expected = meta.get("sha256")
+        if expected and _sha256_of(cache_path) == expected:
+            return cache_path
+        print(
+            f"WARNING: cached copy of '{name}' at {cache_path} does not "
+            f"match the recorded sha256; treating it as absent. Run "
+            f"'mmcli datasets pull {name} --force' to redownload.",
+            file=sys.stderr,
+        )
+        return None
+
+    return None
+
+
+
 # ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
@@ -319,12 +432,17 @@ def extract_dataset(dataset_name: str, project_path: str,
         )
         sys.exit(2)
 
-    zip_path = os.path.join(_datasets_dir(), meta["filename"])
-    if not os.path.isfile(zip_path):
+    zip_path = _resolve_dataset_zip(dataset_name)
+    if zip_path is None:
+        hint = (
+            f"Run `mmcli datasets pull {dataset_name}` to fetch it, "
+            if meta.get("ti_name")
+            else ""
+        )
         print(
-            f"ERROR: Dataset zip not found: {zip_path}\n"
-            f"Place '{meta['filename']}' in the datasets directory:\n"
-            f"  {_datasets_dir()}",
+            f"ERROR: Dataset zip not found for '{dataset_name}'.\n"
+            f"{hint}or place '{meta['filename']}' in the datasets "
+            f"directory:\n  {_datasets_dir()}",
             file=sys.stderr,
         )
         sys.exit(2)
