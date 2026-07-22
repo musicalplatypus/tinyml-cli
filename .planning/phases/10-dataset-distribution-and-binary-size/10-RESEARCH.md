@@ -119,37 +119,87 @@ datasets at all. The app already shells out to mmcli for every other operation, 
 - Use stdlib `urllib.request`. `requests` is not a declared dependency, and adding one to
   shrink a binary is self-defeating.
 
-## Decisions (RESOLVED 2026-07-22)
+## Provenance of the local zips (measured 2026-07-22)
 
-**D-1 — Hosting: GitHub Release assets on `musicalplatypus/tinyml-cli`.**
-The repo already ships versioned artifacts this way; `PlatypusCLI_1.0.0_Release` carries
-`mmcli-…-linux-x86_64`, `…-macos-arm64`, `…-windows-x86_64.exe`. Datasets become additional
-assets on the same releases, so the existing tag convention (`PlatypusCLI_X.Y.Z_Release`) is
-the version axis and no new infrastructure is needed.
+An earlier draft of this document claimed these files existed only on one developer machine
+and were unbacked. **That was wrong**, inferred from `.gitignore` without checking. Verified
+by downloading TI's copies and comparing digests:
 
-Explicitly **not** committed to git. `.gitignore:10` already excludes
-`mmcli/example_datasets/*.zip`, and that rule is correct: 125 MB of binaries in history is
-permanent, paid by every clone, and only removable by rewriting history. `.git` is already
-134 MB.
+| Local file | TI source (`.../mcu_ai/datasets/`) | Match |
+|------------|-----------------------------------|-------|
+| generic_timeseries_classification.zip | same name | byte-identical |
+| generic_timeseries_regression.zip | same name | byte-identical |
+| generic_timeseries_anomalydetection.zip | same name | byte-identical |
+| generic_timeseries_forecasting.zip | same name | byte-identical |
+| fan_blade_fault.zip | `fan_blade_fault_dsi.zip` | byte-identical, renamed |
+| mnist_image_classification.zip | `mnist_classes.zip` | byte-identical, renamed |
+| pir_detection.zip | `pir_detection_classification_dsk.zip` | byte-identical, renamed |
+| arc_fault_classification.zip | `arc_fault_classification_dsi.zip` | byte-identical, renamed |
+| ecg_classification.zip | `ecg_classification_2class.zip` | byte-identical, renamed |
+| generic_audio_classification.zip | *(none — local origin)* | 18 KB, added by `be06559`, tracked in git |
 
-**D-2 — Bundle nothing (Option 3, ~14 MB).** Every dataset is fetched on demand, giving one
-mechanism rather than two. First use of any dataset needs network or `MMCLI_DATASETS`.
+Nine of ten are verbatim TI files under friendlier names; nothing was repackaged. The tenth
+is a synthetic yes/no WAV set authored here.
 
-**D-3 — Per-dataset tag with a global default.** The registry carries a default release tag;
-an individual entry overrides it only when that dataset actually changed. This satisfies
-"datasets may be release specific" without forcing a 125 MB re-upload on every release.
+Recorded sha256 for all ten (use directly in the registry):
 
-Consequence: **the cache key must include the tag** —
-`~/.cache/mmcli/datasets/<tag>/<name>.zip` — so upgrading mmcli cannot silently reuse a
-dataset from an older release.
+```
+bcee7b54fb42079bfac1f4a39266fb836c2ef73c3f8fffd8fa04c41671f7656e  arc_fault_classification.zip
+881ac26e95378eca9c1979cf1c70a8d1b8f2cb73da65e264a03bf1849c6addc6  ecg_classification.zip
+5194925e0f97387a54be989923ec34bef8e65e03fe21652552d7bbcdc21a959e  fan_blade_fault.zip
+dfc463e6a0aac80b2db36770e9fc56090f319d400d416b391d160d70382dbc5d  generic_audio_classification.zip
+7cb2f9fd183fa5c6730abdd0a144e1ce57f7ece9ed93d8663b19a983cde6d6b5  generic_timeseries_anomalydetection.zip
+7b2c0980bb30c3bc661004d66373d7ea35ea13ab5b6f8b74f5182c3bc6bc09c1  generic_timeseries_classification.zip
+4ae6e7e436817a8ee5f3e528e70741b9c6fabfeb6c19a9fdb321dabad0a804ce  generic_timeseries_forecasting.zip
+078d212b00112bcaca4b1bb68b871e8c24eb3ed809b610d64642a74a7854cc23  generic_timeseries_regression.zip
+7fa4be9944a364074dc796d5d802dad8f1636f2f4daa6fd735d15f5fe05f3db8  mnist_image_classification.zip
+d75470c9ba7f56fd4e8801c9f10424262e9935513b9011f55f5f5ed406ae0b0e  pir_detection.zip
+```
 
-## Risk surfaced while resolving D-1
+### TI URL forms
 
-Nine of the ten zips are **not in git and not published anywhere** — `.gitignore` excludes
-them and only `generic_audio_classification.zip` was committed before that rule existed. They
-currently exist solely on one developer machine. Publishing them as release assets is
-therefore not just a distribution change, it is the first backup these files have had. That
-makes 10-03's upload task load-bearing and worth doing early.
+Both work and both serve `application/zip` with range support (`HTTP 206`):
+
+- flat: `https://software-dl.ti.com/C2000/esd/mcu_ai/datasets/<ti_name>.zip`
+- version-pathed: `https://software-dl.ti.com/C2000/esd/mcu_ai/<VER>/datasets/<ti_name>.zip`
+  (`01_02_00`, `01_03_00`, `01_04_00` observed)
+
+Version-pathed URLs resolve even for datasets not referenced at that version in engine
+source, so the versioned form covers all nine.
+
+## Decisions (REVISED 2026-07-22 after the provenance check)
+
+**D-1 — Fetch from TI, do not mirror.** The datasets are TI's, publicly hosted, and already
+version-pathed. Mirroring 125 MB into this repo's releases would duplicate a working CDN,
+add a redistribution question for third-party data, and create a mirror that can silently
+drift from upstream. The registry points at TI URLs instead.
+
+Supersedes the earlier decision to publish them as GitHub Release assets, which rested on the
+false premise that the files were unbacked.
+
+**D-2 — Bundle only what is ours.** `generic_audio_classification.zip` is 18 KB, locally
+authored and already tracked in git, so it stays bundled at negligible cost. The nine TI
+datasets are fetched on demand. Binary target ~14 MB is unaffected.
+
+**D-3 — Version axis is TI's engine version, not an mmcli tag.** A global
+`DATASETS_DEFAULT_VERSION` (e.g. `01_03_00`) with a per-entry `ti_version` override gives the
+"release specific" property, sourced from the authority that actually versions these files.
+
+Consequence: **the cache key includes the version** —
+`~/.cache/mmcli/datasets/<version>/<name>.zip` — so changing the pinned version cannot
+silently reuse an older dataset.
+
+**D-4 — Filename mapping is required.** Five local names differ from TI's, so each entry
+needs both its local `filename` and its `ti_name`.
+
+## Risk introduced by D-1
+
+Availability now depends on `software-dl.ti.com`. Two URL shapes already coexist (flat and
+version-pathed), which suggests TI has reorganised paths at least once, so a future
+reorganisation is plausible. Mitigations: pin the version-pathed form, keep sha256
+verification, and document `MMCLI_DATASETS` as the offline escape hatch. If TI ever breaks
+the paths, mirroring to release assets remains available as a fallback — the registry change
+would be a URL swap, not a redesign.
 
 ## Status
 

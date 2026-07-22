@@ -37,9 +37,9 @@
 
 ### Phase 10: Dataset Distribution and Binary Size
 
-**Goal:** Cut the distributed `mmcli` binary from 260 MB to ~14 MB, and publish the example
-datasets as versioned GitHub Release assets fetched on demand, so a dataset can be
-release-specific and updated without rebuilding the binary.
+**Goal:** Cut the distributed `mmcli` binary from 260 MB to ~14 MB by fetching the TI example
+datasets from their upstream versioned URLs on demand, so a dataset can be release-specific
+and updated without rebuilding the binary.
 
 **Requirements**:
 - REQ-SIZE-01: `dist/mmcli` ≤ 15 MB and starts in < 2.5 s (3-run median)
@@ -50,9 +50,9 @@ release-specific and updated without rebuilding the binary.
   extraction; a corrupt download fails loudly and leaves no cache entry
 - REQ-DATA-03: `MMCLI_DATASETS` disables all fetching (offline / air-gap escape hatch)
 - REQ-DATA-04: All 10 datasets remain obtainable offline via `MMCLI_DATASETS`
-- REQ-DATA-05: Datasets are published as GitHub Release assets pinned to a release tag;
-  a dataset may override the default tag, and the cache is keyed by tag so an mmcli
-  upgrade never silently reuses an older dataset
+- REQ-DATA-05: TI datasets are fetched from software-dl.ti.com at a pinned engine-version
+  path, with a per-dataset version override; the cache is keyed by version so a bump never
+  silently reuses an older dataset
 - REQ-UX-01: PlatypusStudio shows dataset size and an explicit download action, never a
   silent stall
 - REQ-DOC-01: No statement in README about dataset location or `MMCLI_DATASETS` is false
@@ -65,7 +65,7 @@ release-specific and updated without rebuilding the binary.
 Plans:
 - [ ] 10-01-PLAN.md — Enforce PyInstaller exclusions + size regression guard (REQ-SIZE-01/02)
 - [ ] 10-02-PLAN.md — Registry versioning, cache layer, `mmcli datasets pull` (REQ-DATA-01/02/03/05)
-- [ ] 10-03-PLAN.md — Publish assets, unbundle entirely + docs (REQ-SIZE-01, REQ-DATA-04/05)
+- [ ] 10-03-PLAN.md — Unbundle the TI datasets (REQ-SIZE-01, REQ-DATA-04/05)
 - [ ] 10-04-PLAN.md — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
 - [ ] 10-05-PLAN.md — Documentation: README, offline recipe, docs/RELEASING.md (REQ-DOC-01)
 
