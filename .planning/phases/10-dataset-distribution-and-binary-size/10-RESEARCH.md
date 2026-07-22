@@ -96,8 +96,8 @@ current invocations behave identically.
 | 2 | Unbundle the two giants | ~40 MB | 8 small datasets still offline; 2 need fetching |
 | 3 | Bundle nothing | ~14 MB | Meets the original "~10 MB" claim; all datasets need network or `MMCLI_DATASETS` |
 
-Recommended: **Option 2**. The synthetic timeseries sets are what most first runs use and
-cost ~8 MB, preserving a zero-network happy path.
+**Chosen: Option 3** (see D-2). Bundling nothing gives one mechanism rather than two; the
+zero-network path is served by `MMCLI_DATASETS` instead.
 
 ## Layering decision
 
@@ -119,12 +119,37 @@ datasets at all. The app already shells out to mmcli for every other operation, 
 - Use stdlib `urllib.request`. `requests` is not a declared dependency, and adding one to
   shrink a binary is self-defeating.
 
-## Open decisions (need a human)
+## Decisions (RESOLVED 2026-07-22)
 
-1. **Hosting.** GitHub Releases on the fork is free and versioned but couples availability to
-   GitHub reachability — a real constraint for TI/corporate/air-gapped users. Alternative: a
-   TI-internal location, or publish both and let `MMCLI_DATASETS` cover restricted networks.
-2. **How many datasets stay bundled** — Option 2 (8 bundled, ~40 MB) vs Option 3 (none, ~14 MB).
+**D-1 — Hosting: GitHub Release assets on `musicalplatypus/tinyml-cli`.**
+The repo already ships versioned artifacts this way; `PlatypusCLI_1.0.0_Release` carries
+`mmcli-…-linux-x86_64`, `…-macos-arm64`, `…-windows-x86_64.exe`. Datasets become additional
+assets on the same releases, so the existing tag convention (`PlatypusCLI_X.Y.Z_Release`) is
+the version axis and no new infrastructure is needed.
+
+Explicitly **not** committed to git. `.gitignore:10` already excludes
+`mmcli/example_datasets/*.zip`, and that rule is correct: 125 MB of binaries in history is
+permanent, paid by every clone, and only removable by rewriting history. `.git` is already
+134 MB.
+
+**D-2 — Bundle nothing (Option 3, ~14 MB).** Every dataset is fetched on demand, giving one
+mechanism rather than two. First use of any dataset needs network or `MMCLI_DATASETS`.
+
+**D-3 — Per-dataset tag with a global default.** The registry carries a default release tag;
+an individual entry overrides it only when that dataset actually changed. This satisfies
+"datasets may be release specific" without forcing a 125 MB re-upload on every release.
+
+Consequence: **the cache key must include the tag** —
+`~/.cache/mmcli/datasets/<tag>/<name>.zip` — so upgrading mmcli cannot silently reuse a
+dataset from an older release.
+
+## Risk surfaced while resolving D-1
+
+Nine of the ten zips are **not in git and not published anywhere** — `.gitignore` excludes
+them and only `generic_audio_classification.zip` was committed before that rule existed. They
+currently exist solely on one developer machine. Publishing them as release assets is
+therefore not just a distribution change, it is the first backup these files have had. That
+makes 10-03's upload task load-bearing and worth doing early.
 
 ## Status
 

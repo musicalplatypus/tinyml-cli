@@ -10,8 +10,9 @@ REQ-DATA-04, REQ-UX-01 (defined in ROADMAP.md)
 
 ## Goal
 
-Cut the distributed `mmcli` binary from 260 MB to roughly 40 MB, and decouple the example
-dataset catalogue from the binary so datasets can be added without cutting a new release.
+Cut the distributed `mmcli` binary from 260 MB to roughly 14 MB, and publish the example
+datasets as versioned GitHub Release assets fetched on demand, so a dataset can be
+release-specific and updated without rebuilding the binary.
 
 Two independent causes, discovered by measuring the binary rather than reading the build:
 
@@ -33,7 +34,7 @@ Two independent causes, discovered by measuring the binary rather than reading t
 |-------|------|--------------------------|
 | Before | 260.3 MB | ~6.2 s |
 | After `--exclude-module` | 138.7 MB | ~5.2 s |
-| Projected, giants unbundled | ~40 MB | ~1–2 s |
+| Projected, nothing bundled (chosen) | ~14 MB | ~1–2 s |
 
 Startup matters disproportionately because `--onefile` extracts the entire archive on
 *every* launch, so payload size is paid per invocation, not once at install.
@@ -48,12 +49,12 @@ transitive pull-ins and are worth investigating, not assuming.
 | # | Option | Size | Trade-off |
 |---|--------|------|-----------|
 | 1 | Keep everything bundled | 138.7 MB | Zero network, but every dataset ships in every release |
-| 2 | **Unbundle the two giants** | **~40 MB** | 8 small datasets still work offline; 2 need fetching |
-| 3 | Bundle nothing | ~14 MB | Meets the original "~10 MB" claim; every `init --dataset` needs network or `MMCLI_DATASETS` |
+| 2 | Unbundle the two giants | ~40 MB | 8 small datasets still work offline; 2 need fetching |
+| 3 | **Bundle nothing — CHOSEN (D-2)** | **~14 MB** | Meets the original "~10 MB" claim; every `init --dataset` needs network or `MMCLI_DATASETS` |
 
-**Recommended: Option 2.** The synthetic timeseries sets are small and are what most first
-runs use, so keeping them bundled preserves a zero-network happy path for ~8 MB. Option 3
-is the right end state only if dataset fetching proves reliable in the field.
+**Chosen: Option 3** (D-2). Bundling nothing keeps one mechanism instead of two, and the
+zero-network path is served by `MMCLI_DATASETS` rather than by a partial bundle. The
+trade-off accepted: a first `init --dataset` needs network, where today it does not.
 
 ## Design
 
@@ -89,7 +90,7 @@ leave no partial file in the cache.
 |------|------|--------|
 | 10-01-PLAN.md — Enforce PyInstaller exclusions + size regression guard | fix | PENDING |
 | 10-02-PLAN.md — Registry url/sha256, cache layer, `mmcli datasets pull` | feat | PENDING |
-| 10-03-PLAN.md — Unbundle the two large datasets + docs | chore | PENDING |
+| 10-03-PLAN.md — Publish assets, unbundle entirely + docs | chore | PENDING |
 | 10-04-PLAN.md — PlatypusStudio download affordance (separate repo) | feat | PENDING |
 
 10-01 is already implemented but uncommitted in `build_macos.sh`; the plan covers
@@ -106,17 +107,20 @@ committing it plus the regression guard that keeps it from silently reverting.
 - With `MMCLI_DATASETS` set to a directory holding all 10 zips, no network access occurs
 - A build that loses the exclusions fails CI rather than shipping a 260 MB binary
 
-## Open decisions
+## Decisions (RESOLVED 2026-07-22)
 
-These need a human answer before 10-02 can be implemented:
+- **D-1 Hosting:** GitHub Release assets on `musicalplatypus/tinyml-cli`, reusing the
+  existing `PlatypusCLI_X.Y.Z_Release` tags that already carry the per-platform binaries.
+  Not committed to git — `.gitignore` already excludes the zips, and 125 MB in history would
+  be permanent and paid by every clone.
+- **D-2 Bundling:** Option 3 — bundle nothing (~14 MB). One mechanism rather than two.
+- **D-3 Versioning:** per-dataset `tag` override with a global `DATASETS_DEFAULT_TAG`, so a
+  dataset republishes only when it actually changes. The cache is keyed by tag so an mmcli
+  upgrade cannot silently reuse an older dataset.
 
-1. **Hosting.** GitHub Releases on the fork is free, versioned and needs no infrastructure,
-   but makes dataset availability depend on GitHub reachability — a real constraint for TI
-   and corporate/air-gapped users. Alternative: a TI-internal location, or publish both and
-   let `MMCLI_DATASETS` cover restricted environments.
-2. **How many datasets stay bundled.** Option 2 keeps 8 (~8 MB) for a zero-network first
-   run; Option 3 keeps none and reaches ~14 MB. Depends on whether the tool is expected to
-   work on first launch without network.
+**Risk surfaced by D-1:** nine of the ten zips are in no repository or release — they exist
+only on one developer machine. 10-03 Task 1 is their first backup, which is why it runs
+before anything that touches the build.
 
 ## Notes
 

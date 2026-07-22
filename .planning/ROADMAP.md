@@ -37,11 +37,12 @@
 
 ### Phase 10: Dataset Distribution and Binary Size
 
-**Goal:** Cut the distributed `mmcli` binary from 260 MB to ~40 MB and decouple the example
-dataset catalogue from the binary, so datasets can ship without cutting a release.
+**Goal:** Cut the distributed `mmcli` binary from 260 MB to ~14 MB, and publish the example
+datasets as versioned GitHub Release assets fetched on demand, so a dataset can be
+release-specific and updated without rebuilding the binary.
 
 **Requirements**:
-- REQ-SIZE-01: `dist/mmcli` ≤ 45 MB and starts in < 2.5 s (3-run median)
+- REQ-SIZE-01: `dist/mmcli` ≤ 15 MB and starts in < 2.5 s (3-run median)
 - REQ-SIZE-02: PyInstaller must not bundle the training engine; a build that loses the
   exclusions fails CI rather than shipping a 260 MB binary
 - REQ-DATA-01: Datasets resolvable via `MMCLI_DATASETS` → bundled → cache → download
@@ -49,6 +50,9 @@ dataset catalogue from the binary, so datasets can ship without cutting a releas
   extraction; a corrupt download fails loudly and leaves no cache entry
 - REQ-DATA-03: `MMCLI_DATASETS` disables all fetching (offline / air-gap escape hatch)
 - REQ-DATA-04: All 10 datasets remain obtainable offline via `MMCLI_DATASETS`
+- REQ-DATA-05: Datasets are published as GitHub Release assets pinned to a release tag;
+  a dataset may override the default tag, and the cache is keyed by tag so an mmcli
+  upgrade never silently reuses an older dataset
 - REQ-UX-01: PlatypusStudio shows dataset size and an explicit download action, never a
   silent stall
 
@@ -57,8 +61,8 @@ dataset catalogue from the binary, so datasets can ship without cutting a releas
 
 Plans:
 - [ ] 10-01-PLAN.md — Enforce PyInstaller exclusions + size regression guard (REQ-SIZE-01/02)
-- [ ] 10-02-PLAN.md — Registry url/sha256, cache layer, `mmcli datasets pull` (REQ-DATA-01/02/03)
-- [ ] 10-03-PLAN.md — Unbundle the two large datasets + docs (REQ-SIZE-01, REQ-DATA-04)
+- [ ] 10-02-PLAN.md — Registry versioning, cache layer, `mmcli datasets pull` (REQ-DATA-01/02/03/05)
+- [ ] 10-03-PLAN.md — Publish assets, unbundle entirely + docs (REQ-SIZE-01, REQ-DATA-04/05)
 - [ ] 10-04-PLAN.md — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
 
 ---
