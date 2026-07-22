@@ -6,6 +6,10 @@ Provides:
   - list_datasets()  — query available datasets, optionally filtered by task
   - extract_dataset() — unzip an example dataset into a new project directory
   - dataset_url()    — compose the version-pinned TI download URL for a dataset
+  - fetch_dataset()  — download, verify (sha256) and cache a TI dataset zip
+  - stderr_is_tty()  — shared TTY predicate: gates the tqdm progress bar here
+                        and the `init --dataset` auto-fetch policy in the CLI
+                        (see 10-06-PLAN.md decision D-5) — one predicate, not two
 
 REQ-DATA-02 invariant, enforced at import time (see _validate_registry below):
 every entry that carries a ``ti_name`` (i.e. every dataset fetchable from TI)
@@ -19,7 +23,18 @@ import.
 import hashlib
 import os
 import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
+
+try:
+    # tqdm is a declared dependency (requirements.txt); guarded for the rare
+    # environment where it is absent so importing this module never breaks.
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - should not happen after adding tqdm
+    tqdm = None
 
 # ---------------------------------------------------------------------------
 # TI download source (D-1/D-3/D-4 in 10-RESEARCH.md)
@@ -28,11 +43,32 @@ import zipfile
 TI_DATASETS_BASE = "https://software-dl.ti.com/C2000/esd/mcu_ai"
 
 # TI's *engine* version, not an mmcli release tag. This is the version axis
-# datasets are pinned to; a future plan keys the on-disk cache path on this
-# value so bumping the pinned version can never silently reuse a dataset
-# fetched under an older TI release. An individual registry entry may
-# override this with its own `ti_version` key.
+# datasets are pinned to, and it is part of the on-disk cache path (see
+# _cache_dir): changing it changes the cache key, so bumping the pinned
+# version can never silently reuse a dataset fetched under an older TI
+# release. An individual registry entry may override this with its own
+# `ti_version` key.
 DATASETS_DEFAULT_VERSION = "01_03_00"
+
+# Socket timeout (seconds), applied to both connect and each read, so a hung
+# or slow-drip server fails instead of stalling forever. Tests override this
+# via monkeypatch to keep the timeout test fast.
+DOWNLOAD_TIMEOUT_SECONDS = 30
+
+
+def stderr_is_tty() -> bool:
+    """Shared predicate: is stderr an interactive terminal right now?
+
+    Used here to decide whether `fetch_dataset` shows a tqdm progress bar,
+    and reused verbatim (imported, not reimplemented) by the CLI's
+    `init --dataset` auto-fetch policy (10-06-PLAN.md decision D-5): if we
+    cannot show progress, we must not start an unnarrated multi-megabyte
+    transfer. Keeping this in one place means progress and permission are
+    answers to the same question rather than two separate heuristics that
+    could drift apart.
+    """
+    return sys.stderr.isatty()
+
 
 # ---------------------------------------------------------------------------
 # Where example zips are stored
@@ -90,8 +126,6 @@ def _sha256_of(path: str) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             hasher.update(chunk)
     return hasher.hexdigest()
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +283,6 @@ def dataset_url(name: str) -> str | None:
     return f"{TI_DATASETS_BASE}/{version}/datasets/{ti_name}"
 
 
-
 def _resolve_dataset_zip(name: str) -> str | None:
     """Resolve the on-disk path for *name*'s zip, or ``None`` if it is not
     available anywhere (the caller — `extract_dataset` or the CLI — decides
@@ -317,6 +350,218 @@ def _resolve_dataset_zip(name: str) -> str | None:
 
     return None
 
+
+class _HostLockedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only when the target host matches the original host.
+
+    A cross-host redirect is refused rather than followed silently: the
+    sha256 check would still catch substituted content, but an unexplained
+    redirect to a different host is worth surfacing as an error in its own
+    right (T-10-02-01/05).
+    """
+
+    def __init__(self, allowed_host: str, dataset_name: str):
+        self._allowed_host = allowed_host
+        self._dataset_name = dataset_name
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_host = urllib.parse.urlparse(newurl).hostname
+        if new_host != self._allowed_host:
+            raise RuntimeError(
+                f"Refusing cross-host redirect while fetching "
+                f"'{self._dataset_name}': {req.full_url} -> {newurl}"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download_to_cache(url: str, cache_dir: str, filename: str,
+                       expected_sha256: str, expected_bytes: int,
+                       name: str) -> str:
+    """Low-level atomic download + verify, shared by `fetch_dataset`.
+
+    Does not enforce a URL scheme itself — `fetch_dataset` is the only place
+    that decides HTTPS is mandatory, which keeps this function testable
+    against a plain local `http.server` fixture instead of a TI TLS
+    endpoint.
+
+    Downloads to a temp file **inside** *cache_dir*, hashing while
+    streaming, then verifies before an atomic `os.replace()` onto the final
+    path. Same-directory placement keeps the rename atomic on the same
+    filesystem; a partial file landing at the final path would become a
+    poisoned cache hit on the very next run, with no way for that run to
+    tell the difference.
+
+    Raises RuntimeError on: oversized/truncated body, checksum mismatch,
+    cross-host redirect, non-2xx HTTP status (404 names the URL and this
+    dataset), or any lower-level urllib/socket failure. The temp file is
+    always removed on any failure path; nothing is left on disk "for
+    debugging".
+    """
+    dest_path = os.path.join(cache_dir, filename)
+    # 1% of the expected size or 1 KiB, whichever is larger — enough slack
+    # for legitimate framing overhead, not enough to let a hostile or
+    # misconfigured server fill the disk before the digest check runs.
+    tolerance = max(1024, int(expected_bytes * 0.01))
+    allowed_host = urllib.parse.urlparse(url).hostname
+
+    fd, tmp_path = tempfile.mkstemp(prefix=".fetch-", suffix=".part", dir=cache_dir)
+    os.close(fd)
+    try:
+        opener = urllib.request.build_opener(
+            _HostLockedRedirectHandler(allowed_host, name)
+        )
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "mmcli-datasets/1"}
+        )
+        try:
+            response = opener.open(request, timeout=DOWNLOAD_TIMEOUT_SECONDS)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise RuntimeError(
+                    f"HTTP 404 fetching '{name}': {url}"
+                ) from exc
+            raise RuntimeError(
+                f"HTTP {exc.code} fetching '{name}': {url}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f"Failed to fetch '{name}' from {url}: {exc}"
+            ) from exc
+        except OSError as exc:
+            # Connect/read timeouts (socket.timeout is OSError, and is not
+            # always wrapped as URLError by urllib -- e.g. a timeout while
+            # reading the response status line surfaces as a raw OSError)
+            # so a hung server fails loudly here rather than hanging the
+            # caller or escaping as an unrelated exception type.
+            raise RuntimeError(
+                f"Failed to fetch '{name}' from {url}: {exc}"
+            ) from exc
+
+        with response:
+            content_length_hdr = response.headers.get("Content-Length")
+            declared_length = None
+            if content_length_hdr is not None:
+                try:
+                    declared_length = int(content_length_hdr)
+                except ValueError:
+                    declared_length = None
+            if declared_length is not None and declared_length > expected_bytes + tolerance:
+                raise RuntimeError(
+                    f"Refusing to fetch '{name}': server-advertised "
+                    f"Content-Length {declared_length} exceeds the "
+                    f"registry size {expected_bytes} by more than the "
+                    f"{tolerance}-byte tolerance."
+                )
+
+            hasher = hashlib.sha256()
+            total = 0
+            show_progress = tqdm is not None and stderr_is_tty()
+            bar = (
+                tqdm(total=expected_bytes, unit="B", unit_scale=True, desc=name)
+                if show_progress else None
+            )
+            try:
+                with open(tmp_path, "wb") as out:
+                    while True:
+                        chunk = response.read(65536)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > expected_bytes + tolerance:
+                            raise RuntimeError(
+                                f"Aborting fetch of '{name}': streamed "
+                                f"{total} bytes, more than the registry "
+                                f"size {expected_bytes} plus the "
+                                f"{tolerance}-byte tolerance. The server "
+                                f"may be hostile or misconfigured."
+                            )
+                        out.write(chunk)
+                        hasher.update(chunk)
+                        if bar is not None:
+                            bar.update(len(chunk))
+            finally:
+                if bar is not None:
+                    bar.close()
+
+            if declared_length is not None and total < declared_length:
+                raise RuntimeError(
+                    f"Truncated download of '{name}': server declared "
+                    f"Content-Length {declared_length} but only {total} "
+                    f"bytes were received."
+                )
+
+        actual_sha256 = hasher.hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise RuntimeError(
+                f"Checksum mismatch for '{name}': expected "
+                f"{expected_sha256}, got {actual_sha256}. URL: {url}. "
+                f"The temp file has been removed; nothing was cached."
+            )
+
+        os.replace(tmp_path, dest_path)
+        return dest_path
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
+def fetch_dataset(name: str, *, force: bool = False) -> str:
+    """Download, verify (sha256) and cache the TI dataset zip for *name*.
+
+    Returns the path to the verified, cached file. If a correctly-verified
+    copy is already cached and *force* is False, returns it immediately
+    without issuing any network request.
+
+    Raises
+    ------
+    KeyError
+        *name* is not in DATASET_REGISTRY.
+    RuntimeError
+        MMCLI_DATASETS is set (REQ-DATA-03 — this variable signals a
+        managed/air-gapped environment and disables fetching unconditionally,
+        even on this explicit call), *name* has no ti_name (nothing to fetch
+        — it is bundled-only), the composed URL is not HTTPS, or the
+        download/verification fails for any of the reasons documented on
+        `_download_to_cache`.
+    """
+    meta = DATASET_REGISTRY[name]  # KeyError on unknown name, deliberately
+
+    env = os.environ.get("MMCLI_DATASETS")
+    if env:
+        raise RuntimeError(
+            f"Refusing to fetch '{name}': MMCLI_DATASETS is set to "
+            f"'{env}'. That variable signals a managed or air-gapped "
+            f"environment; a tool that fetches anyway would silently "
+            f"defeat it. Unset MMCLI_DATASETS to allow fetching, or place "
+            f"'{meta['filename']}' in that directory yourself."
+        )
+
+    url = dataset_url(name)
+    if url is None:
+        raise RuntimeError(
+            f"'{name}' has no upstream source and cannot be fetched — it "
+            f"is bundled with mmcli. See `mmcli datasets path {name}`."
+        )
+    if not url.startswith("https://"):
+        raise RuntimeError(
+            f"Refusing to fetch non-HTTPS dataset URL for '{name}': {url}"
+        )
+
+    version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
+    cache_dir = _cache_dir(version)
+    dest_path = os.path.join(cache_dir, meta["filename"])
+
+    if not force and os.path.isfile(dest_path):
+        if _sha256_of(dest_path) == meta["sha256"]:
+            return dest_path
+        # Stale or corrupted cache entry: fall through and redownload rather
+        # than serving bad bytes.
+        os.unlink(dest_path)
+
+    return _download_to_cache(
+        url, cache_dir, meta["filename"], meta["sha256"], meta["bytes"], name
+    )
 
 
 # ---------------------------------------------------------------------------
