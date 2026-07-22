@@ -94,15 +94,48 @@ def check_environment_var(name: str, description: str) -> DiagnosticIssue:
         )
 
 
+def describe_provenance(package) -> str:
+    """Describe where an imported package actually comes from.
+
+    Editable installs import straight from a working tree, so the checked-out
+    branch — not the version string — determines the code that runs. Version
+    numbers are identical across branches of the same release, so they cannot
+    tell you which engine you have. Report path, branch, commit and whether the
+    tree is dirty, and say nothing extra for ordinary site-packages installs.
+    """
+    path = os.path.dirname(getattr(package, "__file__", "") or "")
+    if not path or f"{os.sep}site-packages{os.sep}" in f"{path}{os.sep}":
+        return ""
+
+    def git(*args):
+        try:
+            out = subprocess.run(
+                ["git", *args], cwd=path, capture_output=True, text=True, timeout=5
+            )
+            return out.stdout.strip() if out.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    if not git("rev-parse", "--is-inside-work-tree"):
+        return f"\n    path: {path} (editable)"
+
+    branch = git("rev-parse", "--abbrev-ref", "HEAD") or "detached"
+    commit = git("rev-parse", "--short", "HEAD") or "?"
+    dirty = " +uncommitted changes" if git("status", "--porcelain") else ""
+    return f"\n    path: {path} (editable)\n    source: {branch} @ {commit}{dirty}"
+
+
 def check_tinyml_modelmaker() -> DiagnosticIssue:
     """Check if tinyml_modelmaker can be imported."""
     try:
         import tinyml_modelmaker
+        version = getattr(tinyml_modelmaker, '__version__', 'unknown')
         return DiagnosticIssue(
             name="tinyml_modelmaker",
             severity="critical",
             status="pass",
-            message=f"tinyml_modelmaker {getattr(tinyml_modelmaker, '__version__', 'unknown')} is installed"
+            message=f"tinyml_modelmaker {version} is installed"
+                    + describe_provenance(tinyml_modelmaker)
         )
     except ImportError:
         return DiagnosticIssue(
@@ -143,6 +176,30 @@ def check_path_permission(path: str, description: str) -> DiagnosticIssue:
             message=f"Cannot access {path}: {e}",
             fix_suggestion="Check file permissions and path validity"
         )
+
+
+def check_engine_packages() -> DiagnosticIssue:
+    """Report the training-engine packages that sit behind modelmaker.
+
+    tinyml_tinyverse and tinyml_torchmodelopt are usually installed editable
+    from the same monorepo as modelmaker, so they carry the same hazard: the
+    branch decides the behaviour, and nothing in the version string reveals it.
+    """
+    lines = []
+    for mod_name in ("tinyml_tinyverse", "tinyml_torchmodelopt"):
+        try:
+            mod = __import__(mod_name)
+        except ImportError:
+            lines.append(f"\n    {mod_name}: not importable")
+            continue
+        version = getattr(mod, "__version__", "unknown")
+        lines.append(f"\n    {mod_name} {version}{describe_provenance(mod)}")
+    return DiagnosticIssue(
+        name="Engine packages",
+        severity="info",
+        status="pass",
+        message="training engine" + "".join(lines),
+    )
 
 
 def check_tvm_compiler() -> DiagnosticIssue:
@@ -243,6 +300,7 @@ def run_diagnostic_checks(full: bool = False) -> DiagnosticResult:
         check_environment_var("MMCLI_PYTHON", "MMCLI_PYTHON"),
         check_environment_var("MMCLI_MODELZOO_PATH", "MMCLI_MODELZOO_PATH"),
         check_tinyml_modelmaker(),
+        check_engine_packages(),
         check_tvm_compiler(),
         check_tiarmclang(),
         check_c2000_compiler(),
@@ -315,6 +373,11 @@ def format_diagnostic_results(result: DiagnosticResult) -> str:
         status_symbol = {"pass": "✓", "fail": "✗", "warning": "!"}[issue.status]
         severity_label = f"[{issue.severity.upper()}]"
         lines.append(f"  {status_symbol} {severity_label} {issue.name}")
+        # Passing checks are summarised by name, but a multi-line message carries
+        # detail the name cannot (for example which branch an editable install is
+        # on), and failures print theirs above. Show those continuation lines.
+        if issue.status == "pass" and "\n" in issue.message:
+            lines.extend(issue.message.split("\n")[1:])
 
     # Recommendations
     if not result.is_healthy:
