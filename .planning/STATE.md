@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: "2026-07-22T18:52:54.785Z"
+last_updated: "2026-07-22T19:09:35.790Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -198,7 +198,7 @@ Test infrastructure is being established with centralized fixtures in conftest.p
 
 ## Session Continuity
 
-Last session: 2026-07-07T22:05:00Z (Phase 3 completion)
+Last session: 2026-07-22T19:07:56.218Z
 Resumed from: Phase 2 UAT verification passed (118 tests), Phase 3 ready for execution
 
 **Phase 2 Status:** COMPLETE ✅  
@@ -213,6 +213,42 @@ All major phases complete. Ready for Phase 5 features:
 - **Phase 5**: New Features & UX (plans 05‑01 to 05‑06)
 
 ## Accumulated Context
+
+### Session: 2026-07-22 (Phase 10 Plan 01 execution)
+
+**Note:** the narrative sections above this point (Phase 2-5 status, "Next Steps") are
+stale — they predate Phases 6-9 and the start of Phase 10, which is the project's actual
+current position per `.planning/ROADMAP.md` and `.planning/phases/`. Not rewritten here;
+out of scope for this plan's execution. `.planning/ROADMAP.md`'s per-phase plan tables are
+the authoritative progress source (`gsd-sdk query roadmap.update-plan-progress` keeps them
+current); this file's frontmatter `progress:` block and the automated `state.advance-plan` /
+`state.add-decision` handlers do not parse against this file's legacy narrative format
+(no `Current Plan`/`Total Plans in Phase` fields, no `## Decisions` section), so those
+handlers returned parse errors during this session rather than updating in place.
+
+**Plan 10-01 — PyInstaller exclusions across all three builds + single-source size ceiling —
+COMPLETE.**
+
+- `scripts/pyinstaller_excludes.txt`: single-source thirteen-module PyInstaller exclude list
+  (torch, torchvision, torchaudio, tinyml_modelmaker, tinyml_tinyverse,
+  tinyml_torchmodelopt, tinyml_modelzoo, tvm, matplotlib, scipy, sklearn, onnx, onnxruntime),
+  read by all three build scripts (`build_macos.sh`, `build_linux.sh`, `build_windows.ps1`)
+  instead of each carrying its own copy.
+- `scripts/binary_size_ceiling.txt`: single-source CI size ceiling, `152043520` (145 MiB
+  interim, while the dataset payload is still bundled — 10-03 lowers it to `15728640`).
+- `tests/test_build_config.py`: 15 source-level regression tests; verified by deliberately
+  breaking two named failure modes (removing a module from the shared list; breaking
+  `build_windows.ps1`'s `Get-Content` read) and confirming the suite failed, then restored.
+- Real `bash build_macos.sh` run (macOS arm64): 145,388,496 bytes (138.6 MB), under the
+  152,043,520-byte ceiling, 17 mmcli modules bundled. `--version`, `init --list`,
+  `info -m timeseries`, `analyze`, and `diagnose` all verified working against the built
+  binary.
+- `pwsh` is not installed on this machine; `build_windows.ps1` was verified at the
+  source-assertion level only, not by the PowerShell parser.
+- Commits: `4704b57` (shared exclude list + all three scripts), `41b8ec1` (ceiling +
+  regression test).
+- See `.planning/phases/10-dataset-distribution-and-binary-size/10-01-SUMMARY.md` for full
+  detail.
 
 ### Pending Todos
 
