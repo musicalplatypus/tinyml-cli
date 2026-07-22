@@ -5,11 +5,33 @@ Provides:
   - DATASET_REGISTRY — mapping of dataset names → metadata
   - list_datasets()  — query available datasets, optionally filtered by task
   - extract_dataset() — unzip an example dataset into a new project directory
+  - dataset_url()    — compose the version-pinned TI download URL for a dataset
+
+REQ-DATA-02 invariant, enforced at import time (see _validate_registry below):
+every entry that carries a ``ti_name`` (i.e. every dataset fetchable from TI)
+MUST also carry a 64-hex-character ``sha256`` and a positive ``bytes``. A
+fetchable dataset without a recorded digest is a configuration error and must
+fail at import, not halfway through a multi-megabyte download. If you add a
+new fetchable entry, you must add both fields or the module will refuse to
+import.
 """
 
 import os
 import sys
 import zipfile
+
+# ---------------------------------------------------------------------------
+# TI download source (D-1/D-3/D-4 in 10-RESEARCH.md)
+# ---------------------------------------------------------------------------
+
+TI_DATASETS_BASE = "https://software-dl.ti.com/C2000/esd/mcu_ai"
+
+# TI's *engine* version, not an mmcli release tag. This is the version axis
+# datasets are pinned to; a future plan keys the on-disk cache path on this
+# value so bumping the pinned version can never silently reuse a dataset
+# fetched under an older TI release. An individual registry entry may
+# override this with its own `ti_version` key.
+DATASETS_DEFAULT_VERSION = "01_03_00"
 
 # ---------------------------------------------------------------------------
 # Where example zips are stored
@@ -38,62 +60,150 @@ DATASET_REGISTRY: dict[str, dict] = {
         "task_types": ["generic_timeseries_classification"],
         "module": "timeseries",
         "description": "Synthetic waveform classification (sawtooth, sine, square)",
+        "ti_name": "generic_timeseries_classification.zip",
+        "sha256": "7b2c0980bb30c3bc661004d66373d7ea35ea13ab5b6f8b74f5182c3bc6bc09c1",
+        "bytes": 2579940,
     },
     "generic_timeseries_regression": {
         "filename": "generic_timeseries_regression.zip",
         "task_types": ["generic_timeseries_regression"],
         "module": "timeseries",
         "description": "Synthetic timeseries regression dataset",
+        "ti_name": "generic_timeseries_regression.zip",
+        "sha256": "078d212b00112bcaca4b1bb68b871e8c24eb3ed809b610d64642a74a7854cc23",
+        "bytes": 906660,
     },
     "generic_timeseries_anomalydetection": {
         "filename": "generic_timeseries_anomalydetection.zip",
         "task_types": ["generic_timeseries_anomalydetection"],
         "module": "timeseries",
         "description": "Synthetic anomaly detection (amplitude/frequency shifts)",
+        "ti_name": "generic_timeseries_anomalydetection.zip",
+        "sha256": "7cb2f9fd183fa5c6730abdd0a144e1ce57f7ece9ed93d8663b19a983cde6d6b5",
+        "bytes": 4242845,
     },
     "generic_timeseries_forecasting": {
         "filename": "generic_timeseries_forecasting.zip",
         "task_types": ["generic_timeseries_forecasting"],
         "module": "timeseries",
         "description": "Simulated thermostat temperature forecasting",
+        "ti_name": "generic_timeseries_forecasting.zip",
+        "sha256": "4ae6e7e436817a8ee5f3e528e70741b9c6fabfeb6c19a9fdb321dabad0a804ce",
+        "bytes": 71053,
     },
     "arc_fault_classification": {
         "filename": "arc_fault_classification.zip",
         "task_types": ["arc_fault"],
         "module": "timeseries",
         "description": "DC arc fault current classification (DSI sensor)",
+        "ti_name": "arc_fault_classification_dsi.zip",
+        "sha256": "bcee7b54fb42079bfac1f4a39266fb836c2ef73c3f8fffd8fa04c41671f7656e",
+        "bytes": 13290076,
     },
     "ecg_classification": {
         "filename": "ecg_classification.zip",
         "task_types": ["ecg_classification", "generic_timeseries_classification"],
         "module": "timeseries",
         "description": "ECG 2-class heartbeat classification (normal vs abnormal)",
+        "ti_name": "ecg_classification_2class.zip",
+        "sha256": "881ac26e95378eca9c1979cf1c70a8d1b8f2cb73da65e264a03bf1849c6addc6",
+        "bytes": 4651662,
     },
     "fan_blade_fault": {
         "filename": "fan_blade_fault.zip",
         "task_types": ["motor_fault"],
         "module": "timeseries",
         "description": "Fan blade fault classification (vibration data, 3-axis)",
+        "ti_name": "fan_blade_fault_dsi.zip",
+        "sha256": "5194925e0f97387a54be989923ec34bef8e65e03fe21652552d7bbcdc21a959e",
+        "bytes": 56595859,
     },
     "pir_detection": {
         "filename": "pir_detection.zip",
         "task_types": ["pir_detection"],
         "module": "timeseries",
         "description": "PIR motion detection classification (human vs non-human)",
+        "ti_name": "pir_detection_classification_dsk.zip",
+        "sha256": "d75470c9ba7f56fd4e8801c9f10424262e9935513b9011f55f5f5ed406ae0b0e",
+        "bytes": 1579936,
     },
     "mnist_image_classification": {
         "filename": "mnist_image_classification.zip",
         "task_types": ["image_classification"],
         "module": "vision",
         "description": "MNIST handwritten digit classification (28×28 images)",
+        "ti_name": "mnist_classes.zip",
+        "sha256": "7fa4be9944a364074dc796d5d802dad8f1636f2f4daa6fd735d15f5fe05f3db8",
+        "bytes": 46993516,
     },
     "generic_audio_classification": {
         "filename": "generic_audio_classification.zip",
         "task_types": ["audio_classification"],
         "module": "audio",
         "description": "Synthetic 2-class audio (yes/no) — 16kHz sine-wave WAV files",
+        # No ti_name: this set is locally authored (be06559) and has no TI
+        # upstream, so it stays bundled and is never fetched. It still
+        # carries sha256/bytes for completeness and future integrity checks.
+        "sha256": "dfc463e6a0aac80b2db36770e9fc56090f319d400d416b391d160d70382dbc5d",
+        "bytes": 18371,
     },
 }
+
+
+def _validate_registry(registry: dict) -> None:
+    """Enforce REQ-DATA-02 at import time: every entry with a ``ti_name``
+    (i.e. every dataset that can be fetched from TI) must carry a valid
+    64-hex-character ``sha256`` and a positive ``bytes``. Raises ValueError
+    naming the offending entry rather than letting a fetchable-but-undigested
+    dataset surface as a runtime surprise partway through a download.
+    """
+    hex_digits = set("0123456789abcdef")
+    for name, meta in registry.items():
+        if not meta.get("ti_name"):
+            continue
+        sha256 = meta.get("sha256", "")
+        size = meta.get("bytes", 0)
+        valid_sha256 = (
+            isinstance(sha256, str)
+            and len(sha256) == 64
+            and set(sha256.lower()) <= hex_digits
+        )
+        valid_bytes = isinstance(size, int) and size > 0
+        if not (valid_sha256 and valid_bytes):
+            raise ValueError(
+                f"DATASET_REGISTRY['{name}'] has a ti_name "
+                f"({meta['ti_name']!r}) but is missing a valid sha256/bytes "
+                f"pair (REQ-DATA-02). Every entry that can be fetched from "
+                f"TI must carry a 64-hex-character sha256 and a positive "
+                f"byte count, checked at import so a missing digest is a "
+                f"configuration error, not a runtime surprise."
+            )
+
+
+_validate_registry(DATASET_REGISTRY)
+
+
+def dataset_url(name: str) -> str | None:
+    """Return the version-pathed TI download URL for *name*, or ``None`` when
+    the entry has no ``ti_name`` (i.e. it is locally authored and bundled
+    only, such as ``generic_audio_classification``).
+
+    Looks the name up through ``DATASET_REGISTRY`` — never composes a URL
+    from a caller-supplied string directly — so an unknown name raises
+    ``KeyError`` instead of ever reaching URL construction.
+
+    Uses the version-pathed URL form (``.../<version>/datasets/<ti_name>``),
+    not the flat form: the flat path is effectively "latest" and can drift
+    underneath a pinned digest, while the versioned path is the closest
+    thing TI offers to immutability.
+    """
+    meta = DATASET_REGISTRY[name]  # KeyError on unknown name, deliberately
+    ti_name = meta.get("ti_name")
+    if ti_name is None:
+        return None
+    version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
+    return f"{TI_DATASETS_BASE}/{version}/datasets/{ti_name}"
+
 
 
 # ---------------------------------------------------------------------------
