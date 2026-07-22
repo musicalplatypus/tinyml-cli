@@ -3,8 +3,8 @@
 **Milestone:** v1.2
 **Depends on:** Phase 9
 
-**Requirements:** REQ-SIZE-01, REQ-SIZE-02, REQ-DATA-01, REQ-DATA-02, REQ-DATA-03,
-REQ-DATA-04, REQ-UX-01 (defined in ROADMAP.md)
+**Requirements:** REQ-SIZE-01/02, REQ-DATA-01/02/03/04/05, REQ-UX-01, REQ-DOC-01
+(defined in ROADMAP.md)
 
 **Research:** `10-RESEARCH.md` — all figures measured on macOS arm64, 2026-07-22.
 
@@ -68,7 +68,7 @@ Resolution order becomes:
 
 ```
 1. MMCLI_DATASETS env var          (existing — offline / air-gap escape hatch)
-2. bundled example_datasets/        (existing — now only the small datasets)
+2. bundled example_datasets/        (existing — empty after 10-03; kept for source builds)
 3. ~/.cache/mmcli/datasets/         (new — previously downloaded)
 4. download from registry `url`     (new — on demand, sha256-verified)
 ```
@@ -89,16 +89,17 @@ leave no partial file in the cache.
 | Plan | Type | Status |
 |------|------|--------|
 | 10-01-PLAN.md — Enforce PyInstaller exclusions + size regression guard | fix | PENDING |
-| 10-02-PLAN.md — Registry url/sha256, cache layer, `mmcli datasets pull` | feat | PENDING |
-| 10-03-PLAN.md — Publish assets, unbundle entirely + docs | chore | PENDING |
+| 10-02-PLAN.md — Registry versioning, cache layer, `mmcli datasets pull` | feat | PENDING |
+| 10-03-PLAN.md — Publish assets, unbundle entirely | chore | PENDING |
 | 10-04-PLAN.md — PlatypusStudio download affordance (separate repo) | feat | PENDING |
+| 10-05-PLAN.md — Documentation: README, offline recipe, RELEASING.md | doc | PENDING |
 
-10-01 is already implemented but uncommitted in `build_macos.sh`; the plan covers
-committing it plus the regression guard that keeps it from silently reverting.
+10-01's build change is already committed (143dd7e); that plan now covers the regression
+guard that keeps it from silently reverting.
 
 ## Success Criteria
 
-- `dist/mmcli` is ≤ 45 MB and starts in under 2.5 s (steady state, 3-run median)
+- `dist/mmcli` is ≤ 15 MB and starts in under 2.5 s (steady state, 3-run median)
 - `mmcli --version`, `mmcli init --list`, `mmcli info`, `mmcli analyze` and `mmcli diagnose`
   all behave identically to the 260 MB build
 - `mmcli datasets pull fan_blade_fault` fetches, verifies sha256, caches, and a subsequent

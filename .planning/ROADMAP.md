@@ -55,15 +55,19 @@ release-specific and updated without rebuilding the binary.
   upgrade never silently reuses an older dataset
 - REQ-UX-01: PlatypusStudio shows dataset size and an explicit download action, never a
   silent stall
+- REQ-DOC-01: No statement in README about dataset location or `MMCLI_DATASETS` is false
+  after unbundling; the offline recipe is written down; `docs/RELEASING.md` states the
+  dataset obligations of cutting a release and why they exist
 
 **Depends on:** Phase 9
-**Plans:** 4 plans
+**Plans:** 5 plans
 
 Plans:
 - [ ] 10-01-PLAN.md — Enforce PyInstaller exclusions + size regression guard (REQ-SIZE-01/02)
 - [ ] 10-02-PLAN.md — Registry versioning, cache layer, `mmcli datasets pull` (REQ-DATA-01/02/03/05)
 - [ ] 10-03-PLAN.md — Publish assets, unbundle entirely + docs (REQ-SIZE-01, REQ-DATA-04/05)
 - [ ] 10-04-PLAN.md — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
+- [ ] 10-05-PLAN.md — Documentation: README, offline recipe, docs/RELEASING.md (REQ-DOC-01)
 
 ---
 
