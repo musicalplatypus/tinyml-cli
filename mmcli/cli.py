@@ -933,6 +933,29 @@ def _add_init_parser(subparsers) -> None:
         help="AI module (auto-detected from dataset if omitted).\n"
              "Also used as a filter with --list.",
     )
+    fetch_group = p.add_mutually_exclusive_group()
+    fetch_group.add_argument(
+        "--fetch",
+        dest="fetch",
+        action="store_true",
+        default=None,
+        help=(
+            "Force-fetch a missing dataset from TI, regardless of whether\n"
+            "stderr is a terminal. Overrides MMCLI_AUTO_FETCH.\n"
+            "Refused when MMCLI_DATASETS is set (REQ-DATA-03)."
+        ),
+    )
+    fetch_group.add_argument(
+        "--no-fetch",
+        dest="fetch",
+        action="store_false",
+        default=None,
+        help=(
+            "Never fetch a missing dataset; exit with the exact\n"
+            "'mmcli datasets pull <name>' command to run instead.\n"
+            "Overrides MMCLI_AUTO_FETCH."
+        ),
+    )
 
 
 def _add_datasets_parser(subparsers) -> None:
@@ -1559,6 +1582,115 @@ def _handle_datasets_path(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `init --dataset` auto-fetch policy (decision D-5, 10-06-PLAN.md)
+#
+# Precedence, deliberately stated in this literal order (a reader who infers
+# it from nested ifs will get it wrong):
+#   1. MMCLI_DATASETS set              -> never fetch (REQ-DATA-03, hard)
+#   2. --no-fetch / MMCLI_AUTO_FETCH=0 -> never fetch
+#   3. --fetch  / MMCLI_AUTO_FETCH=1   -> always fetch
+#   4. otherwise                       -> fetch iff stderr_is_tty()
+#
+# `init --dataset` is the *only* command that may fetch implicitly; every
+# other command fetches only via an explicit `datasets pull`.
+# ---------------------------------------------------------------------------
+
+def _resolve_explicit_fetch(args: argparse.Namespace) -> bool | None:
+    """Combine --fetch/--no-fetch with MMCLI_AUTO_FETCH.
+
+    Returns True (always fetch), False (never fetch), or None (no explicit
+    preference — the TTY check decides). The CLI flag takes precedence over
+    the environment variable when both are set.
+    """
+    cli_value = getattr(args, "fetch", None)
+    if cli_value is not None:
+        return cli_value
+    env = os.environ.get("MMCLI_AUTO_FETCH")
+    if env == "1":
+        return True
+    if env == "0":
+        return False
+    return None
+
+
+def _do_init_fetch(name: str) -> None:
+    """Call `fetch_dataset`, surfacing any failure as a clear CLI error."""
+    from mmcli.datasets import fetch_dataset
+
+    try:
+        fetch_dataset(name)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _apply_init_fetch_policy(name: str, args: argparse.Namespace) -> None:
+    """Decide whether `init --dataset name` may fetch right now.
+
+    Called only when the dataset did not already resolve locally (bundled or
+    cached) — the caller checks that first, so a present dataset never
+    consults this policy at all. Exits non-zero with an actionable message
+    (naming the size and the exact `datasets pull` command) when fetching is
+    not permitted; fetches in place and returns when it is.
+    """
+    from mmcli.datasets import DATASET_REGISTRY, stderr_is_tty
+
+    meta = DATASET_REGISTRY.get(name)
+    if meta is None or not meta.get("ti_name"):
+        # Unknown name or a bundled-only entry with nothing to fetch — let
+        # extract_dataset produce its own precise error for this case.
+        return
+
+    size_mb = meta.get("bytes", 0) / (1024 * 1024)
+    pull_cmd = f"mmcli datasets pull {name}"
+    env_datasets = os.environ.get("MMCLI_DATASETS")
+
+    # Rule 1: MMCLI_DATASETS set -> never fetch, regardless of --fetch.
+    if env_datasets:
+        print(
+            f"ERROR: '{name}' ({size_mb:.1f} MB) is not available in "
+            f"MMCLI_DATASETS ('{env_datasets}'), and mmcli will not fetch "
+            f"it while that variable is set (REQ-DATA-03).\n"
+            f"Place '{meta['filename']}' there yourself, or unset "
+            f"MMCLI_DATASETS and run:\n  {pull_cmd}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    explicit_fetch = _resolve_explicit_fetch(args)
+
+    # Rule 2: explicit refusal.
+    if explicit_fetch is False:
+        print(
+            f"ERROR: '{name}' ({size_mb:.1f} MB) is not available locally "
+            f"and --no-fetch (or MMCLI_AUTO_FETCH=0) was given.\n"
+            f"Run:\n  {pull_cmd}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Rule 3: explicit permission.
+    if explicit_fetch is True:
+        _do_init_fetch(name)
+        return
+
+    # Rule 4: fetch iff stderr can narrate it.
+    if stderr_is_tty():
+        _do_init_fetch(name)
+        return
+
+    print(
+        f"ERROR: '{name}' ({size_mb:.1f} MB) is not available locally, and "
+        f"stderr is not a terminal, so mmcli will not start an unnarrated "
+        f"download.\n"
+        f"Run:\n  {pull_cmd}\n"
+        f"or pass --fetch to force the download in this invocation.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Full help printer
 # ---------------------------------------------------------------------------
 
@@ -1878,7 +2010,17 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
-        from mmcli.datasets import extract_dataset
+        from mmcli.datasets import DATASET_REGISTRY, _resolve_dataset_zip, extract_dataset
+
+        # D-5 auto-fetch policy: only consulted when the dataset is not
+        # already available (bundled or cached). A dataset that is already
+        # present behaves exactly as before this phase — the policy is never
+        # invoked in that case.
+        if args.dataset in DATASET_REGISTRY:
+            already_present = _resolve_dataset_zip(args.dataset) is not None
+            if not already_present:
+                _apply_init_fetch_policy(args.dataset, args)
+
         extract_dataset(
             dataset_name=args.dataset,
             project_path=args.project,

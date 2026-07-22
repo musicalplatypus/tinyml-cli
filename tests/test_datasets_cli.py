@@ -1,14 +1,22 @@
-"""Tests for the `mmcli datasets` subcommand (Phase 10 Plan 06, Task 1):
-`list --format json`'s cross-repo JSON contract, `pull`, and `path`.
+"""Tests for the `mmcli datasets` subcommand and the `init --dataset`
+auto-fetch policy (decision D-5), added in Phase 10 Plan 06.
 
-(Task 2 — the D-5 auto-fetch policy gating `init --dataset` — adds its own
-test class to this file in the next commit.)
+Covers the two tasks of 10-06-PLAN.md:
 
-Nothing here reimplements download, verification, or cache-resolution
-logic — every network- or cache-related behaviour is exercised through the
-real `mmcli.datasets` functions (10-02), with `_download_to_cache`
-monkeypatched to fail the test if it is ever called, proving no test
-contacts the real network.
+1. `mmcli datasets list/pull/path` — the JSON contract PlatypusStudio (plan
+   10-04) decodes, plus pull/path CLI behaviour.
+2. The D-5 auto-fetch policy gating `init --dataset`'s implicit fetch.
+
+Nothing here reimplements download, verification, cache-resolution, or
+TTY-detection logic — every network- or cache-related behaviour is exercised
+through the real `mmcli.datasets` functions (10-02), with `_download_to_cache`
+monkeypatched to prove no test ever contacts the real network. `_download_to
+_cache` is replaced either with a function that fails the test if called (to
+prove a refusal never reaches the network), or with one that copies an
+already-verified bundled zip into the target cache directory (to simulate a
+successful fetch without a network round-trip: since the bundled file is
+byte-identical to what a real fetch would produce, its digest already
+matches DATASET_REGISTRY, so no fake bytes need to be hand-crafted).
 
 Datasets are still bundled at this point in the phase (10-03 unbundles them
 next), so tests that need a `downloadable`/`cached`/`unavailable` state must
@@ -99,6 +107,25 @@ def _forbid_download(monkeypatch):
         datasets_mod, "_download_to_cache",
         lambda *a, **k: pytest.fail("must not attempt a network download"),
     )
+
+
+def _install_fake_successful_download(monkeypatch):
+    """Make `fetch_dataset()` succeed for any ti-fetchable dataset with zero
+    network access, by copying the real bundled zip (byte-identical, so its
+    digest already matches DATASET_REGISTRY) into the cache directory
+    `_download_to_cache` would have written to. Same technique 10-02's suite
+    uses in `test_force_flag_bypasses_fetch_dataset_cache_short_circuit`.
+    """
+    def _fake_download(url, cache_dir, filename, sha256, nbytes, name):
+        src = os.path.join(_REAL_BUNDLED_DIR, filename)
+        dest = os.path.join(cache_dir, filename)
+        shutil.copyfile(src, dest)
+        return dest
+
+    monkeypatch.setattr(
+        datasets_mod, "dataset_url", lambda n: "https://example.invalid/fake.zip"
+    )
+    monkeypatch.setattr(datasets_mod, "_download_to_cache", _fake_download)
 
 
 def _run(monkeypatch, capsys, argv):
@@ -311,3 +338,119 @@ class TestDatasetsPath:
         code, out, err = _run(monkeypatch, capsys, ["datasets", "path", _SMALL_TI_DATASET])
         assert code != 0
         assert f"mmcli datasets pull {_SMALL_TI_DATASET}" in err
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — D-5 auto-fetch policy for `init --dataset`
+# ---------------------------------------------------------------------------
+
+class TestInitAutoFetchPolicy:
+    """The seven behaviour cases from 10-06-PLAN.md Task 2, tested by
+    injecting the TTY predicate (monkeypatching `stderr_is_tty`) rather than
+    allocating a pty, per the plan's own instruction.
+    """
+
+    def _init_argv(self, project_dir, extra=()):
+        return [
+            "init",
+            "--task", "generic_timeseries_forecasting",
+            "--dataset", _SMALL_TI_DATASET,
+            "--project", str(project_dir),
+            *extra,
+        ]
+
+    def test_tty_missing_no_env_fetches_and_creates_project(
+        self, hide_bundled, isolated_cache, monkeypatch, capsys, tmp_path
+    ):
+        monkeypatch.setattr(datasets_mod, "stderr_is_tty", lambda: True)
+        _install_fake_successful_download(monkeypatch)
+
+        project = tmp_path / "proj_tty"
+        code, out, err = _run(monkeypatch, capsys, self._init_argv(project))
+        assert code == 0, err
+        assert os.path.isdir(project / "dataset")
+
+    def test_non_tty_missing_refuses_no_request_message_has_pull_cmd_and_size(
+        self, hide_bundled, isolated_cache, monkeypatch, capsys, tmp_path
+    ):
+        monkeypatch.setattr(datasets_mod, "stderr_is_tty", lambda: False)
+        _forbid_download(monkeypatch)
+
+        project = tmp_path / "proj_nontty"
+        code, out, err = _run(monkeypatch, capsys, self._init_argv(project))
+        assert code != 0
+        assert f"mmcli datasets pull {_SMALL_TI_DATASET}" in err
+        assert "MB" in err
+        assert not project.exists()
+
+    def test_no_fetch_with_tty_refuses_no_request(
+        self, hide_bundled, isolated_cache, monkeypatch, capsys, tmp_path
+    ):
+        monkeypatch.setattr(datasets_mod, "stderr_is_tty", lambda: True)
+        _forbid_download(monkeypatch)
+
+        project = tmp_path / "proj_no_fetch"
+        code, out, err = _run(
+            monkeypatch, capsys, self._init_argv(project, extra=["--no-fetch"])
+        )
+        assert code != 0
+        assert f"mmcli datasets pull {_SMALL_TI_DATASET}" in err
+        assert not project.exists()
+
+    def test_fetch_without_tty_fetches(
+        self, hide_bundled, isolated_cache, monkeypatch, capsys, tmp_path
+    ):
+        monkeypatch.setattr(datasets_mod, "stderr_is_tty", lambda: False)
+        _install_fake_successful_download(monkeypatch)
+
+        project = tmp_path / "proj_fetch_flag"
+        code, out, err = _run(
+            monkeypatch, capsys, self._init_argv(project, extra=["--fetch"])
+        )
+        assert code == 0, err
+        assert os.path.isdir(project / "dataset")
+
+    def test_mmcli_datasets_set_absent_refuses_even_with_fetch(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        env_dir = tmp_path / "air_gapped_empty"
+        env_dir.mkdir()
+        monkeypatch.setenv("MMCLI_DATASETS", str(env_dir))
+        monkeypatch.setattr(datasets_mod, "stderr_is_tty", lambda: True)
+        _forbid_download(monkeypatch)
+
+        project = tmp_path / "proj_env_absent"
+        code, out, err = _run(
+            monkeypatch, capsys, self._init_argv(project, extra=["--fetch"])
+        )
+        assert code != 0
+        assert "MMCLI_DATASETS" in err
+        assert not project.exists()
+
+    def test_dataset_already_present_no_policy_involvement(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        # Real environment: nothing hidden, so the bundled zip resolves
+        # normally. The policy helper must never even be consulted.
+        import mmcli.cli as cli_mod
+
+        def _fail_if_called(name, args):
+            pytest.fail("policy must not be consulted when already present")
+
+        monkeypatch.setattr(cli_mod, "_apply_init_fetch_policy", _fail_if_called)
+
+        project = tmp_path / "proj_already_present"
+        code, out, err = _run(monkeypatch, capsys, self._init_argv(project))
+        assert code == 0, err
+        assert os.path.isdir(project / "dataset")
+
+    def test_fetch_and_no_fetch_together_argparse_rejects(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        project = tmp_path / "proj_conflict"
+        code, out, err = _run(
+            monkeypatch, capsys,
+            self._init_argv(project, extra=["--fetch", "--no-fetch"]),
+        )
+        assert code == 2
+        assert not project.exists()
