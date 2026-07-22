@@ -3,14 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: 2026-07-09T05:18:00.136Z
+last_updated: "2026-07-22T18:52:54.785Z"
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 26
-  completed_plans: 31
+  completed_plans: 26
   percent: 83
-stopped_at: Phase 09 complete — all 3 phases (07, 08, 09) of v1.2 milestone done
 ---
 
 # Project State Summary
