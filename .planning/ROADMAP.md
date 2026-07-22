@@ -56,8 +56,13 @@ and updated without rebuilding the binary.
   path, with a per-dataset version override; the cache is keyed by version so a bump never
   silently reuses an older dataset
 - REQ-UX-01: PlatypusStudio shows dataset size and an explicit download action, never a
-  silent stall; mmcli never starts an implicit multi-megabyte transfer in a non-interactive
-  invocation (D-5)
+  silent stall; creating an example project is blocked until that project's dataset is
+  present locally, and the download is an explicit user step rather than a side effect of
+  pressing Create; mmcli never starts an implicit multi-megabyte transfer in a
+  non-interactive invocation (D-5)
+- REQ-UX-02: PlatypusStudio offers a dataset library, reachable at any time and independent
+  of project creation, from which any example dataset can be downloaded to local storage and
+  removed again; it shows, per dataset, the download size and whether it is currently local
 - REQ-DOC-01: No statement in README about dataset location or `MMCLI_DATASETS` is false
   after unbundling; the offline recipe is written down; `docs/RELEASING.md` states the
   dataset obligations of cutting a release and why they exist
