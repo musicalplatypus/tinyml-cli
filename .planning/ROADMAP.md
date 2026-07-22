@@ -43,31 +43,37 @@ and updated without rebuilding the binary.
 
 **Requirements**:
 - REQ-SIZE-01: `dist/mmcli` ≤ 15 MB and starts in < 2.5 s (3-run median)
-- REQ-SIZE-02: PyInstaller must not bundle the training engine; a build that loses the
-  exclusions fails CI rather than shipping a 260 MB binary
+- REQ-SIZE-02: PyInstaller must not bundle the training engine in any of the three published
+  artifacts (Linux, Windows, macOS); a build that loses the exclusions fails CI — meaning the
+  guard runs inside `.github/workflows/` — rather than shipping a 260 MB binary
 - REQ-DATA-01: Datasets resolvable via `MMCLI_DATASETS` → bundled → cache → download
-- REQ-DATA-02: Any registry entry carrying a `url` must carry a `sha256`, verified before
-  extraction; a corrupt download fails loudly and leaves no cache entry
+- REQ-DATA-02: Any registry entry carrying a `ti_name` (i.e. any dataset that can be
+  fetched) must carry a `sha256`, enforced at import and verified before extraction; a
+  corrupt, truncated or substituted download fails loudly and leaves no cache entry
 - REQ-DATA-03: `MMCLI_DATASETS` disables all fetching (offline / air-gap escape hatch)
 - REQ-DATA-04: All 10 datasets remain obtainable offline via `MMCLI_DATASETS`
 - REQ-DATA-05: TI datasets are fetched from software-dl.ti.com at a pinned engine-version
   path, with a per-dataset version override; the cache is keyed by version so a bump never
   silently reuses an older dataset
 - REQ-UX-01: PlatypusStudio shows dataset size and an explicit download action, never a
-  silent stall
+  silent stall; mmcli never starts an implicit multi-megabyte transfer in a non-interactive
+  invocation (D-5)
 - REQ-DOC-01: No statement in README about dataset location or `MMCLI_DATASETS` is false
   after unbundling; the offline recipe is written down; `docs/RELEASING.md` states the
   dataset obligations of cutting a release and why they exist
 
 **Depends on:** Phase 9
-**Plans:** 5 plans
+**Plans:** 8 plans in 5 waves
 
 Plans:
-- [ ] 10-01-PLAN.md — Enforce PyInstaller exclusions + size regression guard (REQ-SIZE-01/02)
-- [ ] 10-02-PLAN.md — Registry versioning, cache layer, `mmcli datasets pull` (REQ-DATA-01/02/03/05)
-- [ ] 10-03-PLAN.md — Unbundle the TI datasets (REQ-SIZE-01, REQ-DATA-04/05)
-- [ ] 10-04-PLAN.md — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
-- [ ] 10-05-PLAN.md — Documentation: README, offline recipe, docs/RELEASING.md (REQ-DOC-01)
+- [ ] 10-01-PLAN.md — wave 1 — Enforce PyInstaller exclusions in all three build scripts + single-source size ceiling (REQ-SIZE-01/02)
+- [ ] 10-02-PLAN.md — wave 2 — Registry digests/versioning, version-scoped cache, verified `fetch_dataset` (REQ-DATA-01/02/03/05)
+- [ ] 10-03-PLAN.md — wave 3 — GET-and-hash gate over all nine TI URLs, then unbundle (REQ-SIZE-01, REQ-DATA-04/05)
+- [ ] 10-06-PLAN.md — wave 3 — `mmcli datasets list/pull/path` + D-5 auto-fetch policy (REQ-DATA-01/03, REQ-UX-01)
+- [ ] 10-04-PLAN.md — wave 4 — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
+- [ ] 10-05-PLAN.md — wave 4 — README, ten-dataset offline recipe, executed as written (REQ-DOC-01, REQ-DATA-03/04)
+- [ ] 10-08-PLAN.md — wave 4 — Wire the new regression guards into CI + per-artifact size and empty-bundle gates (REQ-SIZE-01/02)
+- [ ] 10-07-PLAN.md — wave 5 — docs/RELEASING.md, CLI help, Sphinx (REQ-DOC-01, REQ-DATA-05)
 
 ---
 

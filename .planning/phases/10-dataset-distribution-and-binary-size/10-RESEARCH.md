@@ -85,7 +85,7 @@ def _datasets_dir() -> str:
 - `extract_dataset()` — the single place a zip is opened
 - No download path of any kind exists today
 
-Adding `url`/`sha256` and a cache layer is **additive**: existing precedence is unchanged, so
+Adding `ti_name`/`sha256` and a cache layer is **additive**: existing precedence is unchanged, so
 current invocations behave identically.
 
 ## Options
@@ -108,8 +108,11 @@ datasets at all. The app already shells out to mmcli for every other operation, 
 
 ## Constraints that are requirements, not preferences
 
-- **sha256 mandatory** for any `url`. This adds a remote-fetch path to a tool that then runs
-  training jobs.
+- **sha256 mandatory** for any `ti_name`. Every registry entry that carries a `ti_name` — i.e.
+  every dataset that can be fetched — must carry a `sha256`, enforced at import and verified
+  before extraction. This adds a remote-fetch path to a tool that then runs training jobs.
+  (Restated 2026-07-22, review finding F-2: an earlier draft keyed this off a `url` field. D-4
+  replaced it with `ti_name` + a composed versioned URL, so no `url` field exists.)
 - **Atomic download → verify → `os.replace()`.** A partial file at the final path becomes a
   poisoned cache hit on the next run.
 - **`MMCLI_DATASETS` disables fetching entirely** — it signals a managed/air-gapped
