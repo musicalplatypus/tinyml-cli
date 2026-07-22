@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # build_macos.sh — Build a standalone macOS binary for mmcli using PyInstaller
 #
-# The binary is lightweight (~10 MB) because tinyml_modelmaker is NOT bundled.
+# The training engine (torch, TVM, tinyml_modelmaker and friends) is excluded via
+# --exclude-module, driven by scripts/pyinstaller_excludes.txt, because mmcli calls out
+# to it via the MMCLI_PYTHON subprocess and never needs it in-process. The bundled
+# example datasets are still the largest remaining component until a later phase
+# unbundles them; see scripts/binary_size_ceiling.txt for the current size ceiling.
 # At runtime the binary calls out to an external Python interpreter via the
 # MMCLI_PYTHON environment variable.
 #
@@ -44,14 +48,13 @@ rm -rf "${SCRIPT_DIR}/build" "${SCRIPT_DIR}/dist/mmcli" "${SCRIPT_DIR}/mmcli.spe
 # follows them, dragging in torch, TVM and the whole engine — a ~10 MB launcher became
 # 260 MB with a 6.5 s startup. Excluding them keeps those probes as the no-ops they
 # already handle. numpy and pandas stay: analyze.py genuinely uses them.
-EXCLUDES=(
-    torch torchvision torchaudio
-    tinyml_modelmaker tinyml_tinyverse tinyml_torchmodelopt tinyml_modelzoo
-    tvm
-    matplotlib scipy sklearn onnx onnxruntime
-)
+#
+# The exclude list is shared across all three build scripts
+# (scripts/pyinstaller_excludes.txt) so it cannot drift between platforms.
 EXCLUDE_ARGS=()
-for m in "${EXCLUDES[@]}"; do EXCLUDE_ARGS+=(--exclude-module "$m"); done
+while IFS= read -r m; do
+    [ -n "$m" ] && EXCLUDE_ARGS+=(--exclude-module "$m")
+done < "${SCRIPT_DIR}/scripts/pyinstaller_excludes.txt"
 
 pyinstaller \
     --onefile \

@@ -1,0 +1,13 @@
+torch
+torchvision
+torchaudio
+tinyml_modelmaker
+tinyml_tinyverse
+tinyml_torchmodelopt
+tinyml_modelzoo
+tvm
+matplotlib
+scipy
+sklearn
+onnx
+onnxruntime
