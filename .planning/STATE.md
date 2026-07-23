@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: "2026-07-22T19:39:07.922Z"
+last_updated: "2026-07-23T14:46:15.064Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -295,6 +295,45 @@ COMPLETE.**
 
 - See `.planning/phases/10-dataset-distribution-and-binary-size/10-02-SUMMARY.md` for full
   detail.
+
+### Session: 2026-07-23 (Phase 10 Plan 03 execution — BLOCKED)
+
+**Plan 10-03 — GET-and-hash gate over every fetchable dataset, then unbundle — Task 1 only,
+BLOCKED before Task 2/3.**
+
+- `scripts/verify_dataset_digests.py` (new, committed `ffe1a67`): re-runnable GET-and-hash
+  gate, drives `fetch_dataset(name, force=True)` against a throwaway cache for every
+  fetchable registry entry, PASS/FAIL per dataset, non-zero exit on any failure.
+
+- **Ran for real. Result: 9/9 FAIL, exit 1.** Not a bad digest: TI's CDN now issues a 302 from
+  `software-dl.ti.com` to `downloads.ti.com` for all nine datasets, and `fetch_dataset()`'s
+  `_HostLockedRedirectHandler` (10-02, mitigating T-10-02-01/05) correctly refuses any
+  cross-host redirect. Independently verified via `curl -sL` + sha256 (bypassing the code's
+  host-lock): all nine downloaded bytes match the registry digests exactly. **10-02's
+  `fetch_dataset()` is currently non-functional against TI's real production infrastructure,
+  for every dataset, right now** — this affects every real `mmcli datasets pull`/
+  `init --dataset --fetch` invocation today, independent of this plan.
+
+- Per the plan's own explicit instruction ("This gate is blocking... stop: do not proceed to
+  Task 2"), **Tasks 2 and 3 were not executed**: no `--add-data` line was touched in any build
+  script, `scripts/binary_size_ceiling.txt` is still `152043520`, no build-script comment was
+  rewritten, `dist/mmcli` was not built.
+
+- **BLOCKER for follow-up (not fixed here — out of 10-03's `files_modified` scope, and a
+  security-relevant architectural decision per the plan's own deviation rules, not a Rule 1-3
+  auto-fix):** `mmcli/datasets.py` (10-02's file) needs either (a) `TI_DATASETS_BASE`
+  repointed at `downloads.ti.com` directly, or (b) `_HostLockedRedirectHandler` extended to
+  allowlist this specific, verified TI redirect pair. Re-run
+  `python3 scripts/verify_dataset_digests.py` after that fix; it should need no changes
+  itself. Only then resume 10-03 Tasks 2/3.
+
+- `gsd-sdk query state.add-blocker` returned `{"added": false, "reason": "Blockers section
+  not found in STATE.md"}` against this file's legacy format (consistent with the
+  `state.advance-plan`/`state.add-decision` parse-error note above) — recorded here manually
+  instead, per that same fallback convention.
+
+- See `.planning/phases/10-dataset-distribution-and-binary-size/10-03-SUMMARY.md` for the
+  full verbatim gate output and the content-verification detail.
 
 ### Pending Todos
 
