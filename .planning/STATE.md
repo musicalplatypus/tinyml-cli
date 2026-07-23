@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: "2026-07-23T14:46:15.064Z"
+last_updated: "2026-07-23T16:59:14.518Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -198,7 +198,7 @@ Test infrastructure is being established with centralized fixtures in conftest.p
 
 ## Session Continuity
 
-Last session: 2026-07-22T19:39:07.916Z
+Last session: 2026-07-23T16:59:14.511Z
 Resumed from: Phase 2 UAT verification passed (118 tests), Phase 3 ready for execution
 
 **Phase 2 Status:** COMPLETE ✅  
@@ -334,6 +334,74 @@ BLOCKED before Task 2/3.**
 
 - See `.planning/phases/10-dataset-distribution-and-binary-size/10-03-SUMMARY.md` for the
   full verbatim gate output and the content-verification detail.
+
+### Session: 2026-07-23 (Phase 10 Plan 03 execution — resumed and COMPLETE)
+
+**Plan 10-03 — GitHub release mirror repoint, publish, and dataset unbundle — COMPLETE, with
+one honestly-reported overshoot.**
+
+- Resumes the blocked attempt above: `mmcli/datasets.py` (10-02's file) repointed from the
+  dead `software-dl.ti.com` source to this project's own public GitHub release mirror
+  (`datasets-01_03_00`), per this plan's own D-A..D-D decisions rather than either candidate fix
+  the blocked attempt flagged. `dataset_url()` now composes
+  `github.com/musicalplatypus/tinyml-cli/releases/download/datasets-<version>/<filename>`
+  (named by local `filename`, not `ti_name`). `_HostLockedRedirectHandler` gained a closed,
+  exact-host `ALLOWED_CROSS_HOST_REDIRECTS = {"github.com":
+  {"release-assets.githubusercontent.com"}}` map — every other cross-host redirect, including
+  lookalike hosts, still refuses. This narrowly amends 10-02's T-10-02-01/05. `ti_name` kept as
+  fetchable-sentinel + TI provenance, no longer the URL source. `tests/test_datasets_download.py`
+  updated (50 tests, all passing) including two stale URL assertions the plan's own read_first
+  list missed, plus 5 new tests proving the allow-path and multiple refuse-paths.
+
+- **Checkpoint:** the plan's own `checkpoint:decision` (Task 2) paused execution pending public
+  publish authorization. The user authorized "publish" via the orchestrator.
+
+- **Publish delegation:** Claude Code's auto-mode permission classifier blocked this agent's own
+  `gh release create`/`gh release upload` calls outright as an irreversible ~131 MB public-publish
+  action — independent of the plan or the orchestrator's relay of the user's go-ahead. Per this
+  agent's operating rules, only the permission system itself or a direct user message counts as
+  consent, so the agent stopped rather than routing around the refusal (e.g. via a raw API call).
+  The user performed the publish directly; this agent then independently re-verified it (read-only
+  `gh release view`: 9 assets, sizes exact-matching the registry `bytes`, audio zip absent; and a
+  live re-run of `scripts/verify_dataset_digests.py` against the real mirror: **9/9 PASS, exit
+  0**) before proceeding, rather than trusting the report alone.
+
+- All three build scripts (`build_macos.sh`, `build_linux.sh`, `build_windows.ps1`) unbundled: an
+  explicit, staged `BUNDLED_DATASETS` allowlist (exactly `generic_audio_classification.zip`) now
+  drives a single `--add-data`, replacing the former blanket copy on macOS and adding dataset
+  bundling to Linux/Windows for the first time (those two previously shipped zero datasets).
+  `scripts/binary_size_ceiling.txt` lowered to `15728640` (15 MB). `tests/test_build_config.py`
+  extended with 15 new parametrised assertions (30 total, all passing); manually confirmed (via
+  scratch copies, not committed) that they fail when `--add-data` is deleted or given the wrong
+  separator.
+
+- **Real `bash build_macos.sh` run: binary carries exactly one dataset zip** (confirmed via
+  PyInstaller archive inspection — none of the other nine leaked in despite all ten zips being
+  present in the working tree). **However, `dist/mmcli` measures 31,839,872 bytes (~31.84 MB)
+  and starts in ~6.7-9.6s median — both OVER REQ-SIZE-01's 15 MB / 2.5s bounds, even after full
+  unbundling.** Archive inspection shows the remainder is numpy/pandas/PIL/cryptography native
+  libraries genuinely used in-process (not datasets, not the excluded training engine), plus
+  likely `--onefile` per-launch extraction overhead on an unnotarized binary. Per explicit
+  instruction, neither figure was massaged and the ceiling was not raised — this is flagged as an
+  open follow-up rather than silently resolved. `requirements-completed` for this plan is
+  `[REQ-DATA-04, REQ-DATA-05]`; `REQ-SIZE-01` is NOT marked complete.
+
+- `pwsh` remains absent on this machine; `build_windows.ps1` verified at the source-assertion
+  level only via `tests/test_build_config.py`.
+
+- Commits: `73ad23f` (Task 1 — repoint + redirect allowlist), `42b6b3f` (Task 4 — unbundle all
+  three scripts + ceiling + tests), `6f7c60a` (Task 5 — real measurement recorded in
+  `build_macos.sh`'s comment). Task 3 (the publish) created no repo-file commit by design
+  (`files_modified: []`); it was performed by the user directly, per the delegation above.
+
+- `gsd-sdk query state.advance-plan` again returned a parse error against this file's legacy
+  narrative format (consistent with the 10-01/10-02/10-03-blocked sessions above); recorded here
+  manually instead. `gsd-sdk query roadmap.update-plan-progress 10` was run and updated
+  `.planning/ROADMAP.md`'s Phase 10 plan table directly.
+
+- See `.planning/phases/10-dataset-distribution-and-binary-size/10-03-SUMMARY.md` for full
+  detail (references the blocked attempt-1 record above rather than discarding it) and
+  `10-03-SUMMARY-attempt1-blocked.md` for the original TI-CDN-moved diagnosis this plan resolved.
 
 ### Pending Todos
 
