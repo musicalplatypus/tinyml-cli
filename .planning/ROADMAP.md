@@ -79,7 +79,7 @@ and updated without rebuilding the binary.
   dataset obligations of cutting a release and why they exist
 
 **Depends on:** Phase 9
-**Plans:** 4/10 plans executed
+**Plans:** 5/10 plans executed
 
 Plans:
 - [x] 10-01-PLAN.md — wave 1 — Enforce PyInstaller exclusions in all three build scripts + single-source size ceiling (REQ-SIZE-01/02)
@@ -87,7 +87,7 @@ Plans:
 - [x] 10-03-PLAN.md — wave 3 — Mirror the nine datasets to the project's own GitHub release assets, repoint fetch_dataset() (with a narrow github.com → release-assets.githubusercontent.com redirect allowance), verify the mirror end-to-end, then unbundle (REQ-SIZE-01, REQ-DATA-04/05). Replaces the dead TI-URL fetch: TI's CDN now 302s software-dl.ti.com → downloads.ti.com → 404. Registry digests confirmed correct; bytes mirrored from mmcli/example_datasets/.
 - [x] 10-06-PLAN.md — wave 3 — `mmcli datasets list/pull/path` + D-5 auto-fetch policy (REQ-DATA-01/03, REQ-UX-01)
 - [ ] 10-04-PLAN.md — wave 4 — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
-- [ ] 10-05-PLAN.md — wave 4 — README, ten-dataset offline recipe, executed as written (REQ-DOC-01, REQ-DATA-03/04)
+- [x] 10-05-PLAN.md — wave 4 — README, ten-dataset offline recipe, executed as written (REQ-DOC-01, REQ-DATA-03/04)
 - [ ] 10-08-PLAN.md — wave 4 — Wire the new regression guards into CI + per-artifact size and empty-bundle gates (REQ-SIZE-01/02)
 - [ ] 10-09-PLAN.md — wave 5 — PlatypusStudio standalone dataset library + `mmcli datasets remove`, cross-repo (REQ-UX-02)
 - [ ] 10-07-PLAN.md — wave 5 — docs/RELEASING.md, CLI help, Sphinx (REQ-DOC-01, REQ-DATA-05)

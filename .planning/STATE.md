@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: "2026-07-23T16:59:14.518Z"
+last_updated: "2026-07-23T21:11:14.453Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -198,7 +198,7 @@ Test infrastructure is being established with centralized fixtures in conftest.p
 
 ## Session Continuity
 
-Last session: 2026-07-23T16:59:14.511Z
+Last session: 2026-07-23T21:08:26.441Z
 Resumed from: Phase 2 UAT verification passed (118 tests), Phase 3 ready for execution
 
 **Phase 2 Status:** COMPLETE ✅  
@@ -402,6 +402,50 @@ one honestly-reported overshoot.**
 - See `.planning/phases/10-dataset-distribution-and-binary-size/10-03-SUMMARY.md` for full
   detail (references the blocked attempt-1 record above rather than discarding it) and
   `10-03-SUMMARY-attempt1-blocked.md` for the original TI-CDN-moved diagnosis this plan resolved.
+
+### Session: 2026-07-23 (Phase 10 Plan 05 execution — COMPLETE)
+
+**Plan 10-05 — README truth-up + ten-dataset offline recipe — COMPLETE.**
+
+- Corrected two false README.md claims left over from 10-03's unbundle/mirror: the intro's "9
+  bundled example datasets... downloaded from TI's servers" and "lightweight binary (~10 MB)".
+  Replaced `## Example Datasets` with a `## Datasets` section documenting the real GitHub
+  release-mirror source (with the TI-CDN-moved rationale), the `MMCLI_DATASETS` → bundled →
+  cache → download resolution order, the `mmcli datasets list/pull/path` surface (10-06), the
+  D-5 auto-fetch policy, and a full ten-dataset offline/air-gapped recipe. Fixed the
+  `MMCLI_DATASETS` env var table row (stale "bundled `example_datasets/`" default / "Override"
+  wording). Binary size claims now use 10-03's measured **31.8 MB** (not the aspirational
+  ~14/15 MB) — no startup number was restated in the README.
+- **Executed the offline recipe literally, twice, against the real `dist/mmcli` binary.** This
+  found a real bug in the plan's own assumed approach: `mmcli datasets path
+  generic_audio_classification` piped into `cp` does NOT work, because `dist/mmcli` is a
+  PyInstaller `--onefile` build that deletes its `_MEI<random>` extraction directory
+  synchronously at process exit — the printed path is already invalid by the time a following
+  shell command tries to use it. Fixed the recipe to materialize the tenth dataset via `mmcli
+  init --dataset generic_audio_classification -t audio_classification -p <tmp>` (extraction
+  happens while the process is alive) followed by re-zipping `<tmp>/dataset/` under the expected
+  filename — safe because `MMCLI_DATASETS`-resolved files are not sha256-checked, by design.
+  Re-ran the exact bash blocks extracted from the *committed* README text from a clean cache: all
+  10 zips assembled, `datasets list --format json` reports all 10 as `bundled`, and `mmcli init
+  --dataset <name>` exits 0 for all 10 with `http_proxy`/`https_proxy` pointed at an unroutable
+  address (network unreachable) and `MMCLI_DATASETS` set.
+- README_zh.md: corrected the same two facts in Chinese directly; added an explicit pointer to
+  `README.md#datasets` for the new offline-recipe/CLI content rather than machine-translating it
+  and presenting that as reviewed text, per the plan's explicit instruction.
+- Logged one out-of-scope discovery to
+  `.planning/phases/10-dataset-distribution-and-binary-size/deferred-items.md`:
+  `mmcli/cli.py`'s `datasets pull`/`init --fetch` help text still says "from TI" (stale after
+  10-03's repoint) — outside this plan's `files_modified` (`README.md`/`README_zh.md` only), a
+  candidate for 10-07.
+- Commits: `6d42add` (Task 1, includes the offline-recipe fix found during Task 2's literal
+  execution before this commit was made — see the plan's own summary for why there is no
+  separate "before the fix" commit) and `6280ad7` (Task 3, README_zh.md).
+- `gsd-sdk query state.advance-plan`/`state.record-metric`/`state.add-decision` all returned
+  parse errors against this file's legacy narrative format (same as every Phase 10 session
+  above); recorded here manually instead. `gsd-sdk query roadmap.update-plan-progress 10` was
+  run and updated `.planning/ROADMAP.md`'s Phase 10 plan table directly.
+- See `.planning/phases/10-dataset-distribution-and-binary-size/10-05-SUMMARY.md` for full
+  detail, including the exact commands run and their outputs.
 
 ### Pending Todos
 
