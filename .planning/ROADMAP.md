@@ -52,9 +52,11 @@ and updated without rebuilding the binary.
   corrupt, truncated or substituted download fails loudly and leaves no cache entry
 - REQ-DATA-03: `MMCLI_DATASETS` disables all fetching (offline / air-gap escape hatch)
 - REQ-DATA-04: All 10 datasets remain obtainable offline via `MMCLI_DATASETS`
-- REQ-DATA-05: TI datasets are fetched from software-dl.ti.com at a pinned engine-version
-  path, with a per-dataset version override; the cache is keyed by version so a bump never
-  silently reuses an older dataset
+- REQ-DATA-05: datasets are fetched from the project's own versioned GitHub release mirror
+  (`releases/download/datasets-<version>/`), with a per-dataset version override; the cache is
+  keyed by version so a bump never silently reuses an older dataset. (Reworded 2026-07-23: the
+  original upstream, software-dl.ti.com, moved its paths in production — 302 → downloads.ti.com
+  → 404 — so the nine datasets are mirrored to release assets from their digest-verified bytes.)
 - REQ-UX-01: PlatypusStudio shows dataset size and an explicit download action, never a
   silent stall; creating an example project is blocked until that project's dataset is
   present locally, and the download is an explicit user step rather than a side effect of
@@ -73,7 +75,7 @@ and updated without rebuilding the binary.
 Plans:
 - [x] 10-01-PLAN.md — wave 1 — Enforce PyInstaller exclusions in all three build scripts + single-source size ceiling (REQ-SIZE-01/02)
 - [x] 10-02-PLAN.md — wave 2 — Registry digests/versioning, version-scoped cache, verified `fetch_dataset` (REQ-DATA-01/02/03/05)
-- [ ] 10-03-PLAN.md — wave 3 — GET-and-hash gate over all nine TI URLs, then unbundle (REQ-SIZE-01, REQ-DATA-04/05) — **BLOCKED**: gate Task 1 ran for real and failed 9/9 (TI's CDN redirects software-dl.ti.com → downloads.ti.com; fetch_dataset()'s cross-host redirect refusal correctly blocks it, content independently confirmed correct via curl). Tasks 2/3 (unbundle) not started. See 10-03-SUMMARY.md.
+- [ ] 10-03-PLAN.md — wave 3 — Mirror the nine datasets to the project's own GitHub release assets, repoint fetch_dataset() (with a narrow github.com → release-assets.githubusercontent.com redirect allowance), verify the mirror end-to-end, then unbundle (REQ-SIZE-01, REQ-DATA-04/05). Replaces the dead TI-URL fetch: TI's CDN now 302s software-dl.ti.com → downloads.ti.com → 404. Registry digests confirmed correct; bytes mirrored from mmcli/example_datasets/.
 - [x] 10-06-PLAN.md — wave 3 — `mmcli datasets list/pull/path` + D-5 auto-fetch policy (REQ-DATA-01/03, REQ-UX-01)
 - [ ] 10-04-PLAN.md — wave 4 — PlatypusStudio download affordance, cross-repo (REQ-UX-01)
 - [ ] 10-05-PLAN.md — wave 4 — README, ten-dataset offline recipe, executed as written (REQ-DOC-01, REQ-DATA-03/04)
