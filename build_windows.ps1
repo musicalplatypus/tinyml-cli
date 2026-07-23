@@ -2,11 +2,14 @@
 #
 # The training engine (torch, TVM, tinyml_modelmaker and friends) is excluded via
 # --exclude-module, driven by scripts/pyinstaller_excludes.txt, because mmcli calls out
-# to it via the MMCLI_PYTHON subprocess and never needs it in-process. The bundled
-# example datasets are still the largest remaining component until a later phase
-# unbundles them; see scripts/binary_size_ceiling.txt for the current size ceiling.
-# At runtime the binary calls out to an external Python interpreter via the
-# MMCLI_PYTHON environment variable.
+# to it via the MMCLI_PYTHON subprocess and never needs it in-process. Only
+# generic_audio_classification.zip (the one locally-authored example dataset, D-2 in
+# 10-03-PLAN.md) is bundled into the binary; the other nine example datasets are
+# fetched on demand from this project's own GitHub release mirror
+# (github.com/musicalplatypus/tinyml-cli releases, tag datasets-<version>) via
+# `mmcli datasets pull` rather than shipped. See scripts/binary_size_ceiling.txt for
+# the enforced size bound. At runtime the binary calls out to an external Python
+# interpreter via the MMCLI_PYTHON environment variable.
 #
 # Requirements (in the active venv):
 #   pip install pyinstaller mmcli  (or pip install -e .)
@@ -47,14 +50,37 @@ $ExcludeArgs = Get-Content $ExcludeFile |
     Where-Object { $_.Trim() -ne "" } |
     ForEach-Object { '--exclude-module', $_ }
 
-pyinstaller `
-    --onefile `
-    --name mmcli `
-    --hidden-import mmcli `
-    --hidden-import mmcli.builder `
-    --hidden-import mmcli.cli `
-    @ExcludeArgs `
-    "$ScriptDir\mmcli\__main__.py"
+# Explicit bundling allowlist (10-03-PLAN.md D-2/T-10-03-02): this script previously
+# shipped zero datasets (no --add-data at all), leaving generic_audio_classification
+# unreachable on Windows — this staging fixes REQ-DATA-04 here. Stage exactly the one
+# locally-authored dataset into a fresh temp directory and --add-data *that*, so the
+# bundled set is a property of this script, not of whatever zips sit in the
+# developer's working tree. Windows --add-data uses ";" as the source/dest separator,
+# not ":" — the POSIX form yields a silently empty bundle here, not an error. Splatted
+# via @DataArgs (same technique as @ExcludeArgs) rather than interpolated into the
+# backtick-continued command line, for the same stringification reason. The stage dir
+# is removed in a finally block so a failed build leaves nothing behind.
+$BundledDatasets = @("generic_audio_classification.zip")
+$DatasetStageDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mmcli-dataset-stage-" + [System.Guid]::NewGuid())
+New-Item -ItemType Directory -Path $DatasetStageDir | Out-Null
+try {
+    foreach ($f in $BundledDatasets) {
+        Copy-Item (Join-Path $ScriptDir "mmcli\example_datasets\$f") $DatasetStageDir
+    }
+    $DataArgs = @('--add-data', "$DatasetStageDir;mmcli/example_datasets")
+
+    pyinstaller `
+        --onefile `
+        --name mmcli `
+        --hidden-import mmcli `
+        --hidden-import mmcli.builder `
+        --hidden-import mmcli.cli `
+        @ExcludeArgs `
+        @DataArgs `
+        "$ScriptDir\mmcli\__main__.py"
+} finally {
+    Remove-Item -Recurse -Force $DatasetStageDir
+}
 
 Write-Host ""
 Write-Host "Build complete: $ScriptDir\dist\mmcli.exe"

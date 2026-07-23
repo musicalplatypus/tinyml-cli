@@ -32,6 +32,32 @@ SANCTIONED_CEILINGS = (152043520, 15728640)
 
 NEVER_EXCLUDE = ("numpy", "pandas")
 
+# 10-03-PLAN.md D-2: only this one locally-authored dataset is bundled into the
+# binary on every platform; the other nine (below) are fetched on demand from the
+# GitHub release mirror and must never be named by a script's --add-data flag.
+BUNDLED_DATASET_FILENAME = "generic_audio_classification.zip"
+MIRRORED_DATASET_FILENAMES = {
+    "arc_fault_classification.zip",
+    "ecg_classification.zip",
+    "fan_blade_fault.zip",
+    "generic_timeseries_anomalydetection.zip",
+    "generic_timeseries_classification.zip",
+    "generic_timeseries_forecasting.zip",
+    "generic_timeseries_regression.zip",
+    "mnist_image_classification.zip",
+    "pir_detection.zip",
+}
+DATASET_DEST = "mmcli/example_datasets"
+
+# Separator PyInstaller's --add-data expects between the source and destination
+# halves of its argument: ":" on macOS/Linux, ";" on Windows. Getting this wrong on
+# Windows silently produces an empty bundle rather than an error (T-10-03-05).
+EXPECTED_ADD_DATA_SEPARATOR = {
+    "build_macos.sh": ":",
+    "build_linux.sh": ":",
+    "build_windows.ps1": ";",
+}
+
 EXPECTED_EXCLUDED_MODULES = {
     "torch",
     "torchvision",
@@ -78,6 +104,35 @@ def _literal_exclude_modules(text):
     """
     code = _strip_comment_lines(text)
     return set(re.findall(r'--exclude-module\s+"?\'?([A-Za-z0-9_.]+)"?\'?', code))
+
+
+def _add_data_values(text):
+    """Return the raw quoted argument value(s) that follow a literal --add-data flag.
+
+    Matches two shapes across the three scripts:
+      - bash form:        --add-data "SRC:DST"
+      - PowerShell splat:  @('--add-data', "SRC;DST")   (comma between flag and value,
+                            since the flag and its value are two separate array
+                            elements rather than one whitespace-joined token)
+    Matching the parsed argument, not a bare substring, so a comment or an unrelated
+    string can never be mistaken for an actual --add-data value.
+    """
+    code = _strip_comment_lines(text)
+    bash_style = re.findall(r'--add-data\s+["\']([^"\']+)["\']', code)
+    ps_style = re.findall(r"--add-data['\"]?\s*,\s*[\"']([^\"']+)[\"']", code)
+    return bash_style + ps_style
+
+
+def _bundled_dataset_allowlist(text):
+    """Return the set of *.zip filenames literally present in the script's
+    BUNDLED_DATASETS (bash) / $BundledDatasets (PowerShell) allowlist array."""
+    code = _strip_comment_lines(text)
+    match = re.search(r"BUNDLED_DATASETS=\(([^)]*)\)", code) or re.search(
+        r"\$BundledDatasets\s*=\s*@\(([^)]*)\)", code
+    )
+    if not match:
+        return set()
+    return set(re.findall(r"([A-Za-z0-9_]+\.zip)", match.group(1)))
 
 
 class TestExcludesList:
@@ -162,6 +217,82 @@ def test_build_windows_is_named_in_this_file():
     assert re.search(r"build_windows\.ps1", this_file_text)
     assert re.search(r"build_linux\.sh", this_file_text)
     assert re.search(r"build_macos\.sh", this_file_text)
+
+
+class TestBuildScriptsBundleOnlyTheOneLocalDataset:
+    """10-03-PLAN.md D-2/T-10-03-02/T-10-03-05: every one of the three build scripts
+    must stage exactly generic_audio_classification.zip into the shipped bundle via a
+    single --add-data argument, with the platform-correct separator, and must never
+    name any of the nine mirrored datasets in that flag. Parametrised so a fourth
+    build script means adding one path to BUILD_SCRIPTS, not writing a fourth test."""
+
+    @pytest.mark.parametrize("script_path", BUILD_SCRIPTS, ids=lambda p: p.name)
+    def test_script_has_exactly_one_add_data_argument(self, script_path):
+        text = script_path.read_text()
+        values = _add_data_values(text)
+        assert len(values) == 1, (
+            f"{script_path.name} must pass exactly one --add-data argument, found "
+            f"{len(values)}: {values}"
+        )
+
+    @pytest.mark.parametrize("script_path", BUILD_SCRIPTS, ids=lambda p: p.name)
+    def test_script_add_data_uses_platform_separator_and_correct_destination(
+        self, script_path
+    ):
+        text = script_path.read_text()
+        [value] = _add_data_values(text)
+        sep = EXPECTED_ADD_DATA_SEPARATOR[script_path.name]
+        assert sep in value, (
+            f"{script_path.name}'s --add-data value {value!r} does not contain the "
+            f"platform-correct separator {sep!r}"
+        )
+        source, _, dest = value.rpartition(sep)
+        assert source, f"{script_path.name}'s --add-data has no source half: {value!r}"
+        assert dest == DATASET_DEST, (
+            f"{script_path.name}'s --add-data destination is {dest!r}, expected "
+            f"{DATASET_DEST!r} (mmcli._datasets_dir() resolves this exact path)"
+        )
+
+    @pytest.mark.parametrize("script_path", BUILD_SCRIPTS, ids=lambda p: p.name)
+    def test_script_add_data_source_is_the_staging_variable(self, script_path):
+        # The source half of --add-data is a staging variable (not a literal
+        # filename), since the bundled set is staged into a temp dir rather than
+        # filtered from mmcli/example_datasets in place. Per plan D-2's parenthetical:
+        # when the source is a staging variable, the BUNDLED_DATASETS allowlist
+        # literal must appear in the script and must name exactly the one bundled
+        # dataset.
+        text = script_path.read_text()
+        [value] = _add_data_values(text)
+        sep = EXPECTED_ADD_DATA_SEPARATOR[script_path.name]
+        source, _, _dest = value.rpartition(sep)
+        if BUNDLED_DATASET_FILENAME in source:
+            return  # source names the file directly — no allowlist needed
+        allowlist = _bundled_dataset_allowlist(text)
+        assert allowlist == {BUNDLED_DATASET_FILENAME}, (
+            f"{script_path.name}'s --add-data source {source!r} is a staging "
+            f"variable, but its BUNDLED_DATASETS allowlist is {allowlist!r}, "
+            f"expected exactly {{{BUNDLED_DATASET_FILENAME!r}}}"
+        )
+
+    @pytest.mark.parametrize("script_path", BUILD_SCRIPTS, ids=lambda p: p.name)
+    def test_script_add_data_never_names_a_mirrored_dataset(self, script_path):
+        text = script_path.read_text()
+        [value] = _add_data_values(text)
+        named = MIRRORED_DATASET_FILENAMES & set(re.findall(r"[A-Za-z0-9_]+\.zip", value))
+        assert not named, (
+            f"{script_path.name}'s --add-data names mirrored dataset(s) {named} — "
+            f"only {BUNDLED_DATASET_FILENAME} may ever be bundled"
+        )
+
+    @pytest.mark.parametrize("script_path", BUILD_SCRIPTS, ids=lambda p: p.name)
+    def test_script_never_stages_a_mirrored_dataset_in_its_allowlist(self, script_path):
+        text = script_path.read_text()
+        allowlist = _bundled_dataset_allowlist(text)
+        named = MIRRORED_DATASET_FILENAMES & allowlist
+        assert not named, (
+            f"{script_path.name}'s BUNDLED_DATASETS allowlist stages mirrored "
+            f"dataset(s) {named} — only {BUNDLED_DATASET_FILENAME} may be staged"
+        )
 
 
 class TestBinarySizeCeiling:
