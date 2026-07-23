@@ -9,8 +9,18 @@
 # fetched on demand from this project's own GitHub release mirror
 # (github.com/musicalplatypus/tinyml-cli releases, tag datasets-<version>) via
 # `mmcli datasets pull` rather than shipped. See scripts/binary_size_ceiling.txt for
-# the enforced size bound. At runtime the binary calls out to an external Python
-# interpreter via the MMCLI_PYTHON environment variable.
+# the enforced size bound (15,728,640 bytes / 15 MB, REQ-SIZE-01). At runtime the
+# binary calls out to an external Python interpreter via the MMCLI_PYTHON environment
+# variable.
+#
+# Measured on macOS arm64 (10-03-PLAN.md Task 5, ~/.venv-tinyml, 2026-07-23): the
+# built binary is 31,839,872 bytes (~31.84 MB) — over the 15 MB ceiling above, even
+# after unbundling all nine mirrored datasets. numpy, pandas, PIL and cryptography
+# (kept because analyze.py/requests-stack code genuinely uses them) account for most
+# of the remainder; see 10-03-SUMMARY.md for the full breakdown and the open
+# follow-up. The measured 3-run median startup was also over the 2.5 s REQ-SIZE-01
+# bound (see 10-03-SUMMARY.md) — both figures are reported here honestly rather than
+# adjusted to fit.
 #
 # Requirements (in the active venv):
 #   pip install pyinstaller mmcli  (or pip install -e .)
