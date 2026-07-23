@@ -9,13 +9,17 @@ Command-line interface for [tinyml-modelmaker](https://github.com/musicalplatypu
 tinyml-modelmaker training and compilation pipeline entirely from the command line —
 no YAML config file required (though one can optionally be used as a base).
 
-It ships with **9 bundled example datasets** covering all task types, so you can
-create a project and start training with a single command.
+It ships with one small example dataset built into the binary
+(`generic_audio_classification`, 18 KB); the other nine are fetched on first
+use from this project's own GitHub release mirror (see [Datasets](#datasets)
+below), so `mmcli init --dataset` still gets you to a running project in a
+single command whenever the network is reachable. Air-gapped machines can
+preload every dataset ahead of time via `MMCLI_DATASETS`.
 
 ## How it works
 
-`mmcli` is a lightweight binary (~10 MB) that does **not** bundle
-`tinyml_modelmaker`, PyTorch, or TVM. Instead it:
+`mmcli` is a single native binary (**~31.8 MB**, measured on macOS) that does
+**not** bundle `tinyml_modelmaker`, PyTorch, or TVM. Instead it:
 
 1. Translates your CLI arguments into the config dict that `tinyml_modelmaker` expects
 2. Writes a temporary YAML file
@@ -485,27 +489,141 @@ mmcli deploy flash \
 
 ---
 
-## Example Datasets
+## Datasets
 
-`mmcli` bundles 9 example datasets downloaded from TI's servers. Use `mmcli init`
-to extract them into a new project.
+`mmcli` ships with exactly one dataset built into the binary
+(`generic_audio_classification`, 18 KB). The other nine are fetched on first
+use from this project's own GitHub release mirror —
+`releases/download/datasets-<version>/<filename>` on
+[`musicalplatypus/tinyml-cli`](https://github.com/musicalplatypus/tinyml-cli/releases/tag/datasets-01_03_00)
+— not from TI. TI's original CDN (`software-dl.ti.com`) moved its paths in
+production and now 404s, so the nine datasets were mirrored to this
+project's own release assets from their digest-verified bytes.
 
-| Dataset Name | Task Type | Size | Description |
-|-------------|-----------|------|-------------|
-| `generic_timeseries_classification` | classification | 2.5 MB | Synthetic waveforms (sawtooth, sine, square) |
-| `generic_timeseries_regression` | regression | 885 KB | Synthetic regression data |
-| `generic_timeseries_anomalydetection` | anomaly detection | 4.0 MB | Amplitude/frequency anomalies |
-| `generic_timeseries_forecasting` | forecasting | 69 KB | Simulated thermostat temperatures |
-| `arc_fault_classification` | arc_fault | 13 MB | DC arc fault currents (DSI sensor) |
-| `ecg_classification` | ecg_classification | 4.4 MB | ECG 2-class heartbeat (normal vs abnormal) |
-| `fan_blade_fault` | motor_fault | 54 MB | Fan blade vibration (3-axis accelerometer) |
-| `pir_detection` | pir_detection | 1.5 MB | PIR motion detection (human vs non-human) |
-| `mnist_image_classification` | image_classification | 45 MB | MNIST handwritten digits (28×28 images) |
+| Dataset Name | Task Type | Size | Description | Source |
+|-------------|-----------|------|-------------|--------|
+| `generic_timeseries_classification` | classification | 2.5 MB | Synthetic waveforms (sawtooth, sine, square) | fetched |
+| `generic_timeseries_regression` | regression | 885 KB | Synthetic regression data | fetched |
+| `generic_timeseries_anomalydetection` | anomaly detection | 4.0 MB | Amplitude/frequency anomalies | fetched |
+| `generic_timeseries_forecasting` | forecasting | 69 KB | Simulated thermostat temperatures | fetched |
+| `arc_fault_classification` | arc_fault | 13 MB | DC arc fault currents (DSI sensor) | fetched |
+| `ecg_classification` | ecg_classification | 4.4 MB | ECG 2-class heartbeat (normal vs abnormal) | fetched |
+| `fan_blade_fault` | motor_fault | 54 MB | Fan blade vibration (3-axis accelerometer) | fetched |
+| `pir_detection` | pir_detection | 1.5 MB | PIR motion detection (human vs non-human) | fetched |
+| `mnist_image_classification` | image_classification | 45 MB | MNIST handwritten digits (28×28 images) | fetched |
+| `generic_audio_classification` | audio_classification | 18 KB | Synthetic 2-class audio (yes/no), 16kHz sine-wave WAVs | bundled |
 
-To use an external datasets directory instead of the bundled one, set:
+### Resolution order
+
+Every dataset lookup (`mmcli init --dataset <name>`, `mmcli datasets path <name>`,
+`mmcli datasets pull <name>`) resolves in this order:
+
+1. **`MMCLI_DATASETS`**, if set to an existing directory. Setting this variable
+   **disables all fetching, unconditionally** — it is the offline/air-gapped
+   escape hatch, not a path override with a network fallback. A dataset not
+   found inside `MMCLI_DATASETS` is treated as unavailable even if it could
+   otherwise be downloaded.
+2. The bundled directory inside the binary — only `generic_audio_classification`
+   lives here now.
+3. The version-scoped cache, `~/.cache/mmcli/datasets/<version>/` (honours
+   `XDG_CACHE_HOME`). The version is part of the path deliberately, so bumping
+   the mirrored dataset release can never silently reuse a zip fetched under
+   an older version.
+4. Download from the GitHub release mirror, sha256-verified against the
+   registry before it is written into the cache.
+
+### `mmcli datasets` — list, fetch, and locate
+
 ```bash
-export MMCLI_DATASETS=/path/to/your/datasets
+mmcli datasets list                                # human table: name, state, size, description
+mmcli datasets list --format json                  # committed JSON interface (name/version/state/bytes/...)
+mmcli datasets pull fan_blade_fault                 # download + sha256-verify; cache short-circuits a repeat pull
+mmcli datasets path generic_audio_classification    # print the resolved on-disk path, or exit non-zero
 ```
+
+`state` in `datasets list` is one of `bundled`, `cached`, `downloadable`, or
+`unavailable` — computed live against the current machine's disk and
+environment, not a static registry field.
+
+### A first `init --dataset` on a fetched set needs network
+
+Unlike the old fully-bundled build, a first `mmcli init --dataset <name>` for
+one of the nine mirrored datasets needs network access unless it is already
+cached or `MMCLI_DATASETS` supplies it. To meet this in the docs rather than
+as a surprise mid-command:
+
+- `init --dataset` only auto-fetches when stderr is an interactive terminal.
+  Pass `--fetch` to force a fetch, or `--no-fetch` to refuse and print the
+  exact `mmcli datasets pull <name>` command to run instead.
+- A non-interactive invocation (piped, scripted, CI) never fetches implicitly
+  — it prints that same refusal and exits non-zero, rather than starting an
+  unnarrated multi-megabyte transfer.
+- `MMCLI_DATASETS` disables fetching everywhere, including inside
+  `init --dataset`.
+
+### Offline / air-gapped recipe (all ten datasets)
+
+On a machine **with** network access:
+
+```bash
+# 1. Pull all nine fetchable datasets into the local cache.
+for n in arc_fault_classification ecg_classification fan_blade_fault \
+         generic_timeseries_anomalydetection generic_timeseries_classification \
+         generic_timeseries_forecasting generic_timeseries_regression \
+         mnist_image_classification pir_detection; do
+  mmcli datasets pull "$n"
+done
+
+# 2. Assemble an offline directory from the version-scoped cache. The cached
+#    filenames are already the *local* names MMCLI_DATASETS resolves by.
+mkdir -p ~/mmcli-offline-datasets
+cp ~/.cache/mmcli/datasets/*/*.zip ~/mmcli-offline-datasets/
+
+# 3. The tenth dataset has no download URL — it ships inside the binary and
+#    is never fetched. Its bundled copy lives inside a PyInstaller onefile
+#    temp directory that is deleted the instant the process exits, so
+#    printing its path (`datasets path`) and piping that into a following
+#    `cp` does not work — the file is already gone by the time `cp` runs.
+#    Materialize it instead by letting `init --dataset` extract it into a
+#    throwaway project (extraction happens while mmcli is still running),
+#    then re-zip the result under the name MMCLI_DATASETS expects:
+mmcli init --dataset generic_audio_classification -t audio_classification \
+  -p /tmp/mmcli-audio-seed
+(cd /tmp/mmcli-audio-seed/dataset && zip -qr \
+  ~/mmcli-offline-datasets/generic_audio_classification.zip .)
+rm -rf /tmp/mmcli-audio-seed
+```
+
+Then move `~/mmcli-offline-datasets/` to the air-gapped machine, and there:
+
+```bash
+export MMCLI_DATASETS=~/mmcli-offline-datasets
+mmcli datasets list --format json   # all ten report state "bundled", none "downloadable"
+```
+
+All ten zips must be present in the directory named by `MMCLI_DATASETS`
+before exporting it — once set, that variable disables fetching entirely, so
+a missing zip is not recoverable by falling back to the network. Files
+resolved via `MMCLI_DATASETS` are not sha256-checked (that directory is
+explicitly user-managed), so the re-zipped copy of the tenth dataset — byte-
+different from, but content-identical to, the original — resolves and
+extracts correctly.
+
+**Fallback for manual/proxied downloads:** if you must fetch a zip through a
+browser or a proxy instead of `datasets pull`, note that five of the nine
+mirrored datasets are stored under a different name than the one
+`MMCLI_DATASETS` expects (`ti_name`, the original TI provenance record, vs.
+the registry's local `filename`). Rename after downloading:
+
+| Local name (what `MMCLI_DATASETS` expects) | Original name |
+|---|---|
+| `fan_blade_fault.zip` | `fan_blade_fault_dsi.zip` |
+| `mnist_image_classification.zip` | `mnist_classes.zip` |
+| `pir_detection.zip` | `pir_detection_classification_dsk.zip` |
+| `arc_fault_classification.zip` | `arc_fault_classification_dsi.zip` |
+| `ecg_classification.zip` | `ecg_classification_2class.zip` |
+
+The remaining four mirrored datasets keep the same name on both sides.
 
 
 ## Useful options
@@ -733,7 +851,7 @@ that has `tinyml_modelmaker`.
 |----------|---------|-------------|
 | `MMCLI_PYTHON` | `python` or `python3` on PATH | Python interpreter with `tinyml_modelmaker` installed |
 | `MMCLI_MODELMAKER` | auto-detected | Path to tinyml-modelmaker source dir (only needed if auto-detection fails) |
-| `MMCLI_DATASETS` | bundled `example_datasets/` | Override directory containing example dataset zips |
+| `MMCLI_DATASETS` | unset (fetch from the GitHub release mirror; only `generic_audio_classification` is bundled) | Directory of dataset zips to use instead of fetching. Setting it **disables all dataset fetching** — see [Datasets](#datasets). |
 | `ARM_LLVM_CGT_PATH` | (none) | Root of the ARM LLVM toolchain. When set, `mmcli` looks for `tiarmclang` at `$ARM_LLVM_CGT_PATH/bin/tiarmclang`. Falls back to `PATH` if unset. Required for compilation when tiarmclang is not on `PATH`. |
 | `C2000_CG_ROOT` | `~/bin/ti-cgt-c2000_*` | Root of the TI C2000 CGT installation. Required for compilation of C2000 targets (F28P55, F28P65, etc.) on all platforms. Download from [TI's website](https://www.ti.com/tool/C2000-CGT). |
 
