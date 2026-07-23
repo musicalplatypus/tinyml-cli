@@ -8,11 +8,13 @@
 `mmcli` 是一个**独立的原生二进制文件**（macOS、Linux、Windows），可完全通过命令行驱动 tinyml-modelmaker
 训练和编译流水线——无需 YAML 配置文件（但也可以选择使用 YAML 文件作为基础配置）。
 
-工具内置 **9 个示例数据集**，覆盖所有任务类型，只需一条命令即可创建项目并开始训练。
+工具内置 1 个小型示例数据集（`generic_audio_classification`，18 KB）；其余 9 个数据集
+在首次使用时从本项目自己的 GitHub Release 镜像获取（而非 TI 服务器）——详见下方
+「示例数据集」一节及英文 README 的 "Datasets" 一节。
 
 ## 工作原理
 
-`mmcli` 是一个轻量级二进制文件（约 10 MB），**不**捆绑
+`mmcli` 是一个单文件原生二进制文件（macOS 实测约 31.8 MB），**不**捆绑
 `tinyml_modelmaker`、PyTorch 或 TVM。它的工作方式是：
 
 1. 将您的命令行参数转换为 `tinyml_modelmaker` 所需的配置字典
@@ -368,21 +370,32 @@ mmcli deploy flash \
 
 ## 示例数据集
 
-`mmcli` 内置 9 个从 TI 服务器下载的示例数据集。使用 `mmcli init` 将其提取到新项目中。
+> **本节部分内容已过时，未逐句翻译，以英文版为准：** `mmcli` 现在只在二进制文件中
+> 内置 1 个数据集（`generic_audio_classification`，18 KB）；其余 9 个数据集会在
+> 首次使用时从**本项目自己的 GitHub Release 镜像**下载（而不是从 TI 服务器下载）。
+> 完整的 `mmcli datasets list/pull/path` 子命令说明、`init --dataset` 自动获取策略，
+> 以及覆盖全部十个数据集的离线/隔离网络（air-gapped）获取方案，请参阅英文版
+> [README.md 的 "Datasets" 一节](./README.md#datasets) —— 这部分内容较为复杂，
+> 为避免出现不准确的机器翻译，此处不做逐字翻译。
 
-| 数据集名称 | 任务类型 | 大小 | 说明 |
-|-----------|---------|------|------|
-| `generic_timeseries_classification` | 分类 | 2.5 MB | 合成波形（锯齿波、正弦波、方波） |
-| `generic_timeseries_regression` | 回归 | 885 KB | 合成时序回归数据 |
-| `generic_timeseries_anomalydetection` | 异常检测 | 4.0 MB | 幅度/频率异常 |
-| `generic_timeseries_forecasting` | 预测 | 69 KB | 模拟恒温器温度 |
-| `arc_fault_classification` | 电弧故障 | 13 MB | 直流电弧故障电流分类（DSI 传感器） |
-| `ecg_classification` | 心电分类 | 4.4 MB | ECG 二分类心跳（正常 vs 异常） |
-| `fan_blade_fault` | 电机故障 | 54 MB | 风扇叶片振动数据（三轴加速度计） |
-| `pir_detection` | PIR 检测 | 1.5 MB | PIR 运动检测分类（人类 vs 非人类） |
-| `mnist_image_classification` | 图像分类 | 45 MB | MNIST 手写数字（28×28 图像） |
+下表数据（大小、说明）本身准确，可作为参考；"来源"一列指出该数据集是内置的还是
+需要联网获取的：
 
-如需使用外部数据集目录替代内置目录，请设置：
+| 数据集名称 | 任务类型 | 大小 | 说明 | 来源 |
+|-----------|---------|------|------|------|
+| `generic_timeseries_classification` | 分类 | 2.5 MB | 合成波形（锯齿波、正弦波、方波） | 需获取 |
+| `generic_timeseries_regression` | 回归 | 885 KB | 合成时序回归数据 | 需获取 |
+| `generic_timeseries_anomalydetection` | 异常检测 | 4.0 MB | 幅度/频率异常 | 需获取 |
+| `generic_timeseries_forecasting` | 预测 | 69 KB | 模拟恒温器温度 | 需获取 |
+| `arc_fault_classification` | 电弧故障 | 13 MB | 直流电弧故障电流分类（DSI 传感器） | 需获取 |
+| `ecg_classification` | 心电分类 | 4.4 MB | ECG 二分类心跳（正常 vs 异常） | 需获取 |
+| `fan_blade_fault` | 电机故障 | 54 MB | 风扇叶片振动数据（三轴加速度计） | 需获取 |
+| `pir_detection` | PIR 检测 | 1.5 MB | PIR 运动检测分类（人类 vs 非人类） | 需获取 |
+| `mnist_image_classification` | 图像分类 | 45 MB | MNIST 手写数字（28×28 图像） | 需获取 |
+| `generic_audio_classification` | 音频分类 | 18 KB | 合成双分类音频（yes/no），16kHz 正弦波 WAV | 内置 |
+
+设置 `MMCLI_DATASETS` 可指向一个外部数据集目录，但请注意：这个变量会**完全禁用
+数据集下载**（无论该目录中是否存在所需文件），而不仅仅是"覆盖"内置目录：
 ```bash
 export MMCLI_DATASETS=/path/to/your/datasets
 ```
@@ -604,7 +617,7 @@ powershell build_windows.ps1     # → dist/mmcli.exe
 |------|--------|------|
 | `MMCLI_PYTHON` | PATH 中的 `python` 或 `python3` | 安装了 `tinyml_modelmaker` 的 Python 解释器 |
 | `MMCLI_MODELMAKER` | 自动检测 | tinyml-modelmaker 源代码目录路径（仅在自动检测失败时需要） |
-| `MMCLI_DATASETS` | 内置 `example_datasets/` | 覆盖包含示例数据集 zip 文件的目录 |
+| `MMCLI_DATASETS` | 未设置（从 GitHub Release 镜像获取；仅 `generic_audio_classification` 内置） | 存放数据集 zip 文件的目录，设置后**完全禁用数据集下载**——详见英文版 README 的 [Datasets](./README.md#datasets) 一节 |
 | `C2000_CG_ROOT` | `~/bin/ti-cgt-c2000_*` | TI C2000 CGT 安装根目录。所有平台上编译 C2000 目标设备（F28P55、F28P65 等）时必须设置。从 [TI 官网](https://www.ti.com/tool/C2000-CGT) 下载。 |
 
 ---
