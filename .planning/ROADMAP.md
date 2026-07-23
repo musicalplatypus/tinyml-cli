@@ -43,6 +43,15 @@ and updated without rebuilding the binary.
 
 **Requirements**:
 - REQ-SIZE-01: `dist/mmcli` ≤ 15 MB and starts in < 2.5 s (3-run median)
+  **UNMET — OPEN DECISION (deferred 2026-07-23, must be resolved before this phase closes).**
+  10-03 measured the real post-unbundling macOS build at **31.84 MB / ~6.7-9.6 s**. Datasets took
+  it 260 → ~145 → 31.84 MB; the remaining bulk is numpy/pandas/PIL/cryptography, genuinely used
+  in-process, so 15 MB is not reachable without dependency surgery. Startup is dominated by
+  PyInstaller `--onefile` per-launch extraction (wall-clock ≫ user+sys), so `--onedir` would
+  likely fix the 2.5 s bound at the cost of folder-shaped distribution. Options on the table:
+  relax to a truthful target (~32 MB), attempt dependency cuts, and/or switch build mode.
+  Consequence while open: `scripts/binary_size_ceiling.txt` is `15728640`, which a real build
+  fails — so 10-08 cannot finalise its CI size gate until this is decided.
 - REQ-SIZE-02: PyInstaller must not bundle the training engine in any of the three published
   artifacts (Linux, Windows, macOS); a build that loses the exclusions fails CI — meaning the
   guard runs inside `.github/workflows/` — rather than shipping a 260 MB binary
