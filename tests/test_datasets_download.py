@@ -1,19 +1,23 @@
 """Tests for the on-demand dataset fetch mechanism in mmcli/datasets.py.
 
-Covers three things, corresponding to the three tasks of Phase 10 Plan 02:
+Covers four things, corresponding to the tasks of Phase 10 Plans 02 and 03:
 
-1. Registry invariants and the version-pathed TI URL (`dataset_url`).
+1. Registry invariants and the version-pathed GitHub release-mirror URL
+   (`dataset_url`) — repointed from TI to the mirror in 10-03-PLAN.md D-A/D-B.
 2. Version-scoped cache and the read-resolution order
    (`_resolve_dataset_zip`, `_cache_dir`).
 3. `fetch_dataset` / `_download_to_cache`: mandatory sha256 verification,
    atomic replace, and every documented failure mode.
+4. The narrowed cross-host redirect allowlist (10-03-PLAN.md D-C): the one
+   github.com -> release-assets.githubusercontent.com hop is followed, and
+   every other cross-host redirect is still refused.
 
 Everything here runs against a local `http.server` fixture, never against
-`software-dl.ti.com` — a unit suite that hits the real network is a unit
-suite that fails on a train (and in CI). `fetch_dataset` itself refuses any
-non-HTTPS URL, so the low-level downloader (`_download_to_cache`) is tested
-directly with plain `http://127.0.0.1:<port>` URLs from the local server,
-and `fetch_dataset`'s HTTPS-only policy is tested separately via
+github.com or software-dl.ti.com — a unit suite that hits the real network is
+a unit suite that fails on a train (and in CI). `fetch_dataset` itself
+refuses any non-HTTPS URL, so the low-level downloader (`_download_to_cache`)
+is tested directly with plain `http://127.0.0.1:<port>` URLs from the local
+server, and `fetch_dataset`'s HTTPS-only policy is tested separately via
 monkeypatching `dataset_url` to prove the refusal happens before any
 request is attempted.
 """
@@ -216,9 +220,18 @@ class TestDatasetUrl:
     def test_fan_blade_fault_url(self):
         url = dataset_url("fan_blade_fault")
         assert url == (
-            "https://software-dl.ti.com/C2000/esd/mcu_ai/01_03_00/datasets/"
-            "fan_blade_fault_dsi.zip"
+            "https://github.com/musicalplatypus/tinyml-cli/releases/download/"
+            "datasets-01_03_00/fan_blade_fault.zip"
         )
+
+    def test_url_named_by_local_filename_not_ti_name(self):
+        # D-A: the asset/URL name is the LOCAL filename (on-disk zip / cache
+        # name), never the upstream ti_name.
+        meta = DATASET_REGISTRY["fan_blade_fault"]
+        assert meta["ti_name"] == "fan_blade_fault_dsi.zip"
+        url = dataset_url("fan_blade_fault")
+        assert url.endswith("/fan_blade_fault.zip")
+        assert "fan_blade_fault_dsi" not in url
 
     def test_generic_audio_classification_returns_none(self):
         assert dataset_url("generic_audio_classification") is None
@@ -232,16 +245,21 @@ class TestDatasetUrl:
             if not meta.get("ti_name"):
                 continue
             url = dataset_url(name)
-            assert f"/{DATASETS_DEFAULT_VERSION}/datasets/" in url
+            assert f"/datasets-{DATASETS_DEFAULT_VERSION}/{meta['filename']}" in url
 
     def test_per_entry_ti_version_override(self, monkeypatch):
+        # Guards the per-entry `ti_version` override (D-B): it now overrides
+        # the mirror payload/release version, not a TI engine version.
         monkeypatch.setitem(
             DATASET_REGISTRY["fan_blade_fault"], "ti_version", "01_04_00"
         )
         try:
             url = dataset_url("fan_blade_fault")
-            assert "/01_04_00/datasets/" in url
-            assert "/01_03_00/" not in url
+            assert url == (
+                "https://github.com/musicalplatypus/tinyml-cli/releases/"
+                "download/datasets-01_04_00/fan_blade_fault.zip"
+            )
+            assert "/datasets-01_03_00/" not in url
         finally:
             DATASET_REGISTRY["fan_blade_fault"].pop("ti_version", None)
 
@@ -249,7 +267,9 @@ class TestDatasetUrl:
         for name, meta in DATASET_REGISTRY.items():
             if not meta.get("ti_name"):
                 continue
-            assert dataset_url(name).startswith("https://software-dl.ti.com/")
+            assert dataset_url(name).startswith(
+                "https://github.com/musicalplatypus/tinyml-cli/releases/download/"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +519,85 @@ class TestDownloadToCacheFailureModes:
                 "a" * 64, 100, "redirected",
             )
         assert os.listdir(cache_dir) == []
+
+
+class TestAllowedCrossHostRedirect:
+    """10-03-PLAN.md D-C: the redirect handler's allowlist is a closed,
+    exact-host mapping. It must follow the one verified
+    github.com -> release-assets.githubusercontent.com pair and still refuse
+    every other cross-host redirect, including lookalike hosts that a
+    suffix/wildcard match would wrongly admit. These drive
+    `_HostLockedRedirectHandler` directly (not through a real network
+    request) since "github.com" cannot be the host of the local test server.
+    """
+
+    def test_github_to_release_assets_redirect_is_followed(self):
+        handler = datasets._HostLockedRedirectHandler("github.com", "some_dataset")
+        req = datasets.urllib.request.Request(
+            "https://github.com/musicalplatypus/tinyml-cli/releases/"
+            "download/datasets-01_03_00/fan_blade_fault.zip"
+        )
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", None,
+            "https://release-assets.githubusercontent.com/signed/path?se=1",
+        )
+        assert new_req.full_url == (
+            "https://release-assets.githubusercontent.com/signed/path?se=1"
+        )
+
+    def test_github_to_unrelated_host_still_refused(self):
+        handler = datasets._HostLockedRedirectHandler("github.com", "some_dataset")
+        req = datasets.urllib.request.Request(
+            "https://github.com/musicalplatypus/tinyml-cli/releases/"
+            "download/datasets-01_03_00/fan_blade_fault.zip"
+        )
+        with pytest.raises(RuntimeError, match="cross-host redirect"):
+            handler.redirect_request(
+                req, None, 302, "Found", None,
+                "https://evil.example.com/payload.zip",
+            )
+
+    def test_github_to_lookalike_suffix_host_still_refused(self):
+        # A suffix/endswith match on "githubusercontent.com" would wrongly
+        # allow this; exact host-string equality must refuse it.
+        handler = datasets._HostLockedRedirectHandler("github.com", "some_dataset")
+        req = datasets.urllib.request.Request(
+            "https://github.com/musicalplatypus/tinyml-cli/releases/"
+            "download/datasets-01_03_00/fan_blade_fault.zip"
+        )
+        with pytest.raises(RuntimeError, match="cross-host redirect"):
+            handler.redirect_request(
+                req, None, 302, "Found", None,
+                "https://release-assets.githubusercontent.com.evil.com/x.zip",
+            )
+
+    def test_github_to_lookalike_prefix_host_still_refused(self):
+        handler = datasets._HostLockedRedirectHandler("github.com", "some_dataset")
+        req = datasets.urllib.request.Request(
+            "https://github.com/musicalplatypus/tinyml-cli/releases/"
+            "download/datasets-01_03_00/fan_blade_fault.zip"
+        )
+        with pytest.raises(RuntimeError, match="cross-host redirect"):
+            handler.redirect_request(
+                req, None, 302, "Found", None,
+                "https://evil-githubusercontent.com/x.zip",
+            )
+
+    def test_allowlist_does_not_apply_to_non_github_original_host(self):
+        # The allowlist is keyed on the ORIGINAL request host. A redirect
+        # away from some other host to release-assets.githubusercontent.com
+        # is not in ALLOWED_CROSS_HOST_REDIRECTS and must still be refused.
+        handler = datasets._HostLockedRedirectHandler(
+            "software-dl.ti.com", "some_dataset"
+        )
+        req = datasets.urllib.request.Request(
+            "https://software-dl.ti.com/some/path/asset.zip"
+        )
+        with pytest.raises(RuntimeError, match="cross-host redirect"):
+            handler.redirect_request(
+                req, None, 302, "Found", None,
+                "https://release-assets.githubusercontent.com/signed/path",
+            )
 
     def test_http_404_names_url(self, isolated_cache, http_server):
         base_url, _handler = http_server

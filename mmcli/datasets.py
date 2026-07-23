@@ -5,19 +5,20 @@ Provides:
   - DATASET_REGISTRY — mapping of dataset names → metadata
   - list_datasets()  — query available datasets, optionally filtered by task
   - extract_dataset() — unzip an example dataset into a new project directory
-  - dataset_url()    — compose the version-pinned TI download URL for a dataset
-  - fetch_dataset()  — download, verify (sha256) and cache a TI dataset zip
+  - dataset_url()    — compose the version-pinned GitHub release-mirror URL
+                        for a dataset (see mirror_facts/D-A in 10-03-PLAN.md)
+  - fetch_dataset()  — download, verify (sha256) and cache a mirrored dataset zip
   - stderr_is_tty()  — shared TTY predicate: gates the tqdm progress bar here
                         and the `init --dataset` auto-fetch policy in the CLI
                         (see 10-06-PLAN.md decision D-5) — one predicate, not two
 
 REQ-DATA-02 invariant, enforced at import time (see _validate_registry below):
-every entry that carries a ``ti_name`` (i.e. every dataset fetchable from TI)
-MUST also carry a 64-hex-character ``sha256`` and a positive ``bytes``. A
-fetchable dataset without a recorded digest is a configuration error and must
-fail at import, not halfway through a multi-megabyte download. If you add a
-new fetchable entry, you must add both fields or the module will refuse to
-import.
+every entry that carries a ``ti_name`` (i.e. every dataset fetchable from the
+mirror) MUST also carry a 64-hex-character ``sha256`` and a positive
+``bytes``. A fetchable dataset without a recorded digest is a configuration
+error and must fail at import, not halfway through a multi-megabyte download.
+If you add a new fetchable entry, you must add both fields or the module will
+refuse to import.
 """
 
 import hashlib
@@ -37,17 +38,24 @@ except ImportError:  # pragma: no cover - should not happen after adding tqdm
     tqdm = None
 
 # ---------------------------------------------------------------------------
-# TI download source (D-1/D-3/D-4 in 10-RESEARCH.md)
+# GitHub release-asset mirror (10-03-PLAN.md D-A/D-B; supersedes the TI
+# fetch source from D-1/D-3/D-4 in 10-RESEARCH.md, which is no longer
+# reachable — see 10-03-SUMMARY-attempt1-blocked.md)
 # ---------------------------------------------------------------------------
 
-TI_DATASETS_BASE = "https://software-dl.ti.com/C2000/esd/mcu_ai"
+# Base for this project's own public GitHub Release assets. dataset_url()
+# composes {DATASETS_MIRROR_BASE}/{DATASETS_MIRROR_TAG_PREFIX}{version}/{filename}.
+DATASETS_MIRROR_BASE = "https://github.com/musicalplatypus/tinyml-cli/releases/download"
+DATASETS_MIRROR_TAG_PREFIX = "datasets-"
 
-# TI's *engine* version, not an mmcli release tag. This is the version axis
-# datasets are pinned to, and it is part of the on-disk cache path (see
-# _cache_dir): changing it changes the cache key, so bumping the pinned
-# version can never silently reuse a dataset fetched under an older TI
-# release. An individual registry entry may override this with its own
-# `ti_version` key.
+# Labels the mirror release/payload version (the release tag is
+# datasets-<version>), NOT a TI engine version any more (D-B). This is still
+# the version axis datasets are pinned to, and it is still part of the
+# on-disk cache path (see _cache_dir): changing it changes the cache key, so
+# bumping the pinned version can never silently reuse a dataset fetched under
+# an older mirror release. An individual registry entry may override this
+# with its own `ti_version` key (kept as the field name; it now overrides the
+# mirror payload version, not a TI version).
 DATASETS_DEFAULT_VERSION = "01_03_00"
 
 # Socket timeout (seconds), applied to both connect and each read, so a hung
@@ -102,8 +110,9 @@ def _cache_dir(version: str) -> str:
     The version is part of the path *deliberately*: a flat, version-less
     cache would let bumping DATASETS_DEFAULT_VERSION (or an entry's
     ti_version override) silently reuse a dataset downloaded under an older
-    TI release — exactly the failure D-3 (10-RESEARCH.md) exists to prevent.
-    Two versions therefore always cache independently.
+    mirror release — exactly the failure D-3 (10-RESEARCH.md, and D-B in
+    10-03-PLAN.md) exists to prevent. Two versions therefore always cache
+    independently.
     """
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
         os.path.expanduser("~"), ".cache"
@@ -219,9 +228,10 @@ DATASET_REGISTRY: dict[str, dict] = {
         "task_types": ["audio_classification"],
         "module": "audio",
         "description": "Synthetic 2-class audio (yes/no) — 16kHz sine-wave WAV files",
-        # No ti_name: this set is locally authored (be06559) and has no TI
-        # upstream, so it stays bundled and is never fetched. It still
-        # carries sha256/bytes for completeness and future integrity checks.
+        # No ti_name: this set is locally authored (be06559) and has no
+        # upstream mirror asset, so it stays bundled and is never fetched
+        # (D-2, 10-03-PLAN.md). It still carries sha256/bytes for
+        # completeness and future integrity checks.
         "sha256": "dfc463e6a0aac80b2db36770e9fc56090f319d400d416b391d160d70382dbc5d",
         "bytes": 18371,
     },
@@ -230,10 +240,11 @@ DATASET_REGISTRY: dict[str, dict] = {
 
 def _validate_registry(registry: dict) -> None:
     """Enforce REQ-DATA-02 at import time: every entry with a ``ti_name``
-    (i.e. every dataset that can be fetched from TI) must carry a valid
-    64-hex-character ``sha256`` and a positive ``bytes``. Raises ValueError
-    naming the offending entry rather than letting a fetchable-but-undigested
-    dataset surface as a runtime surprise partway through a download.
+    (i.e. every dataset that can be fetched from the GitHub release mirror)
+    must carry a valid 64-hex-character ``sha256`` and a positive ``bytes``.
+    Raises ValueError naming the offending entry rather than letting a
+    fetchable-but-undigested dataset surface as a runtime surprise partway
+    through a download.
     """
     hex_digits = set("0123456789abcdef")
     for name, meta in registry.items():
@@ -252,9 +263,9 @@ def _validate_registry(registry: dict) -> None:
                 f"DATASET_REGISTRY['{name}'] has a ti_name "
                 f"({meta['ti_name']!r}) but is missing a valid sha256/bytes "
                 f"pair (REQ-DATA-02). Every entry that can be fetched from "
-                f"TI must carry a 64-hex-character sha256 and a positive "
-                f"byte count, checked at import so a missing digest is a "
-                f"configuration error, not a runtime surprise."
+                f"the mirror must carry a 64-hex-character sha256 and a "
+                f"positive byte count, checked at import so a missing "
+                f"digest is a configuration error, not a runtime surprise."
             )
 
 
@@ -262,25 +273,35 @@ _validate_registry(DATASET_REGISTRY)
 
 
 def dataset_url(name: str) -> str | None:
-    """Return the version-pathed TI download URL for *name*, or ``None`` when
-    the entry has no ``ti_name`` (i.e. it is locally authored and bundled
-    only, such as ``generic_audio_classification``).
+    """Return the version-pathed GitHub release-mirror download URL for
+    *name*, or ``None`` when the entry has no ``ti_name`` (i.e. it is locally
+    authored and bundled only, such as ``generic_audio_classification``).
 
     Looks the name up through ``DATASET_REGISTRY`` — never composes a URL
     from a caller-supplied string directly — so an unknown name raises
     ``KeyError`` instead of ever reaching URL construction.
 
-    Uses the version-pathed URL form (``.../<version>/datasets/<ti_name>``),
-    not the flat form: the flat path is effectively "latest" and can drift
-    underneath a pinned digest, while the versioned path is the closest
-    thing TI offers to immutability.
+    Composes ``{DATASETS_MIRROR_BASE}/{DATASETS_MIRROR_TAG_PREFIX}{version}/
+    {meta['filename']}`` (10-03-PLAN.md D-A): the asset is named by the
+    entry's LOCAL ``filename`` — the on-disk zip name and the cache filename
+    — not by ``ti_name``. ``ti_name`` is no longer the URL source; it is kept
+    purely as the fetchable-sentinel (an entry with no ``ti_name`` has no
+    mirror asset and is bundled-only) and as provenance recording which
+    original TI asset the mirrored bytes came from (D-D). The GitHub release
+    download URL is stable and pinnable; it 302-redirects to a signed,
+    time-limited ``release-assets.githubusercontent.com`` URL that cannot be
+    pinned (see ``_HostLockedRedirectHandler`` / ``ALLOWED_CROSS_HOST_REDIRECTS``
+    below for the one redirect hop this module follows).
     """
     meta = DATASET_REGISTRY[name]  # KeyError on unknown name, deliberately
     ti_name = meta.get("ti_name")
     if ti_name is None:
         return None
     version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
-    return f"{TI_DATASETS_BASE}/{version}/datasets/{ti_name}"
+    return (
+        f"{DATASETS_MIRROR_BASE}/{DATASETS_MIRROR_TAG_PREFIX}{version}/"
+        f"{meta['filename']}"
+    )
 
 
 def _resolve_dataset_zip(name: str) -> str | None:
@@ -351,13 +372,35 @@ def _resolve_dataset_zip(name: str) -> str | None:
     return None
 
 
+# Closed allowlist of permitted cross-host redirect PAIRS, keyed on the
+# original request host (10-03-PLAN.md D-C; amends 10-02's T-10-02-01/05).
+# GitHub release-asset downloads at github.com/.../releases/download/...
+# 302-redirect to a signed, time-limited release-assets.githubusercontent.com
+# URL — that one hop is verified and deliberately allowed. Every other
+# cross-host redirect, from any host, still raises. Exact host-string
+# equality only: NEVER a suffix/endswith/wildcard match on
+# "githubusercontent.com", so a lookalike host such as
+# "release-assets.githubusercontent.com.evil.com" or
+# "evil-githubusercontent.com" is still refused. sha256 verification of the
+# downloaded bytes remains mandatory and is the real integrity guarantee;
+# this allowlist only relaxes the defence-in-depth host lock for one
+# verified redirect pair.
+ALLOWED_CROSS_HOST_REDIRECTS: dict[str, frozenset[str]] = {
+    "github.com": frozenset({"release-assets.githubusercontent.com"}),
+}
+
+
 class _HostLockedRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Follow redirects only when the target host matches the original host.
+    """Follow redirects only when the target host matches the original host,
+    or is explicitly allowlisted for that original host.
 
     A cross-host redirect is refused rather than followed silently: the
     sha256 check would still catch substituted content, but an unexplained
     redirect to a different host is worth surfacing as an error in its own
-    right (T-10-02-01/05).
+    right (T-10-02-01/05). The one exception is the closed, exact-host pair
+    in ALLOWED_CROSS_HOST_REDIRECTS (D-C, 10-03-PLAN.md): the GitHub
+    release-asset redirect to its signed-URL host. Every other cross-host
+    redirect is still refused, unchanged from 10-02.
     """
 
     def __init__(self, allowed_host: str, dataset_name: str):
@@ -366,12 +409,17 @@ class _HostLockedRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new_host = urllib.parse.urlparse(newurl).hostname
-        if new_host != self._allowed_host:
-            raise RuntimeError(
-                f"Refusing cross-host redirect while fetching "
-                f"'{self._dataset_name}': {req.full_url} -> {newurl}"
-            )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_host == self._allowed_host:
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        allowed_targets = ALLOWED_CROSS_HOST_REDIRECTS.get(
+            self._allowed_host, frozenset()
+        )
+        if new_host in allowed_targets:
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        raise RuntimeError(
+            f"Refusing cross-host redirect while fetching "
+            f"'{self._dataset_name}': {req.full_url} -> {newurl}"
+        )
 
 
 def _download_to_cache(url: str, cache_dir: str, filename: str,
@@ -381,7 +429,7 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
 
     Does not enforce a URL scheme itself — `fetch_dataset` is the only place
     that decides HTTPS is mandatory, which keeps this function testable
-    against a plain local `http.server` fixture instead of a TI TLS
+    against a plain local `http.server` fixture instead of a real mirror TLS
     endpoint.
 
     Downloads to a temp file **inside** *cache_dir*, hashing while
@@ -507,7 +555,7 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
 
 
 def fetch_dataset(name: str, *, force: bool = False) -> str:
-    """Download, verify (sha256) and cache the TI dataset zip for *name*.
+    """Download, verify (sha256) and cache the mirrored dataset zip for *name*.
 
     Returns the path to the verified, cached file. If a correctly-verified
     copy is already cached and *force* is False, returns it immediately

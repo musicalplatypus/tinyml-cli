@@ -2,13 +2,14 @@
 """verify_dataset_digests.py — GET-and-hash gate over every fetchable dataset.
 
 This is a *content* check, not a reachability check (review finding F-3): a HEAD
-request only proves a URL resolves, it says nothing about the bytes TI actually
-serves at that path. This script downloads the full body of every registry
-entry that has a TI upstream (``dataset_url(name) is not None``) and verifies
-the downloaded bytes against the registry's recorded ``sha256``/``bytes`` —
-the one failure mode that breaks every user is TI serving different bytes at
-the pinned versioned path than whatever was hashed when the registry entry was
-written, and that is exactly what a HEAD check cannot see.
+request only proves a URL resolves, it says nothing about the bytes the
+GitHub release mirror actually serves at that path. This script downloads the
+full body of every registry entry that has a mirror asset (``dataset_url(name)
+is not None``) and verifies the downloaded bytes against the registry's
+recorded ``sha256``/``bytes`` — the one failure mode that breaks every user is
+the mirror serving different bytes at the pinned release/version path than
+whatever was hashed when the registry entry was written, and that is exactly
+what a HEAD check cannot see.
 
 It is driven through ``mmcli.datasets.fetch_dataset(name, force=True)`` rather
 than a second, parallel downloader: that function is the exact code every
@@ -26,11 +27,13 @@ Exit status: 0 if every fetchable dataset's downloaded bytes match its
 registry digest, non-zero otherwise (the specific FAIL lines name which
 dataset(s) failed and why).
 
-This script downloads real data from software-dl.ti.com (roughly 125 MB
-across all nine fetchable datasets, a few minutes on a typical connection)
-into a throwaway cache directory — never the user's real ``~/.cache/mmcli`` —
-and is safe to re-run at any time, e.g. after a ``DATASETS_DEFAULT_VERSION``
-bump (see docs/RELEASING.md).
+This script downloads real data from this project's own GitHub release
+mirror (github.com/musicalplatypus/tinyml-cli/releases, tag
+datasets-<version>; roughly 131 MB across all nine fetchable datasets, a few
+minutes on a typical connection) into a throwaway cache directory — never the
+user's real ``~/.cache/mmcli`` — and is safe to re-run at any time, e.g. after
+a ``DATASETS_DEFAULT_VERSION`` bump / a re-mirror to a new release tag (see
+docs/RELEASING.md).
 """
 from __future__ import annotations
 
@@ -48,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME",
         help="verify only this one registry entry, instead of every "
              "fetchable dataset (useful for iterating without "
-             "re-downloading the other ~125 MB)",
+             "re-downloading the other ~131 MB)",
     )
     args = parser.parse_args(argv)
 
