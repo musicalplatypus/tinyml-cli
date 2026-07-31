@@ -42,16 +42,32 @@ datasets from their upstream versioned URLs on demand, so a dataset can be relea
 and updated without rebuilding the binary.
 
 **Requirements**:
-- REQ-SIZE-01: `dist/mmcli` ≤ 15 MB and starts in < 2.5 s (3-run median)
-  **UNMET — OPEN DECISION (deferred 2026-07-23, must be resolved before this phase closes).**
-  10-03 measured the real post-unbundling macOS build at **31.84 MB / ~6.7-9.6 s**. Datasets took
-  it 260 → ~145 → 31.84 MB; the remaining bulk is numpy/pandas/PIL/cryptography, genuinely used
-  in-process, so 15 MB is not reachable without dependency surgery. Startup is dominated by
-  PyInstaller `--onefile` per-launch extraction (wall-clock ≫ user+sys), so `--onedir` would
-  likely fix the 2.5 s bound at the cost of folder-shaped distribution. Options on the table:
-  relax to a truthful target (~32 MB), attempt dependency cuts, and/or switch build mode.
-  Consequence while open: `scripts/binary_size_ceiling.txt` is `15728640`, which a real build
-  fails — so 10-08 cannot finalise its CI size gate until this is decided.
+- REQ-SIZE-01: `dist/mmcli` ≤ 26 MiB (`27262976` bytes) and starts in < 8 s (3-run median).
+  **REVISED 2026-07-31, replacing "≤ 15 MB and < 2.5 s", which was unreachable.** The original
+  numbers were set before anything was measured; both were resolved against real builds on
+  macOS arm64:
+
+  | Build | Size | Startup (median of 5) |
+  |---|---|---|
+  | current excludes, `--onefile` | 31,840,752 B | 6.1–6.3 s |
+  | **+ exclude PIL, cryptography, `--onefile`** | **25,256,048 B** | 6.1–6.3 s |
+  | + those excludes, `--onedir` | 56 MB dir / 29.5 MB zipped | 2.39 s (6.2 s cold) |
+
+  **Size — 26 MiB.** `PIL` and `cryptography` appear in zero mmcli source files; they were
+  transitive. Excluding them saves 6.58 MB (21%) with `--version`, `init --list`,
+  `datasets list` and `analyze` (4.8 M samples through the numpy/pandas path) all verified
+  identical afterwards. 15 MB stays out of reach because the remainder is numpy and pandas,
+  which `analyze` needs for CSV/npy/pkl and which are *already* lazily imported — so the usual
+  deferral trick is spent, and going further means dropping that input support.
+
+  **Startup — 8 s, and `--onefile` is kept.** Only `--onedir` reaches 2.5 s, and its cost is
+  changing every platform's distribution shape from one file to a folder; the released assets
+  are single binaries today. The ~6.1 s is PyInstaller unpacking the archive on each launch,
+  not import work — exclusions did not move it at all. The bound is set to 8 s to gate against
+  regression rather than to describe an aspiration.
+
+  Consequence: `scripts/binary_size_ceiling.txt` is `27262976`, which a real build passes, so
+  10-08's CI size gate is unblocked.
 - REQ-SIZE-02: PyInstaller must not bundle the training engine in any of the three published
   artifacts (Linux, Windows, macOS); a build that loses the exclusions fails CI — meaning the
   guard runs inside `.github/workflows/` — rather than shipping a 260 MB binary

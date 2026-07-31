@@ -11,3 +11,5 @@ scipy
 sklearn
 onnx
 onnxruntime
+PIL
+cryptography

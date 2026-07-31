@@ -30,8 +30,13 @@ BUILD_SCRIPTS = [
 ]
 
 # 152043520 = 145 MiB, the interim ceiling while the dataset payload is still bundled.
-# 15728640  = 15 MiB (REQ-SIZE-01), the final ceiling once 10-03 unbundles the datasets.
-SANCTIONED_CEILINGS = (152043520, 15728640)
+# 15728640  = 15 MiB, REQ-SIZE-01's original target. Retired 2026-07-31: unreachable, and a
+#             ceiling no build can meet is a gate that has to be ignored to ship.
+# 27262976  = 26 MiB (REQ-SIZE-01 as revised), against a measured 25,256,048-byte build once
+#             PIL and cryptography — neither referenced anywhere in mmcli — are excluded.
+#             ~2 MiB of headroom. The remainder is numpy and pandas, which `analyze` imports
+#             lazily for CSV/npy/pkl input, so cutting further means dropping that support.
+SANCTIONED_CEILINGS = (152043520, 15728640, 27262976)
 
 NEVER_EXCLUDE = ("numpy", "pandas")
 
@@ -75,6 +80,12 @@ EXPECTED_EXCLUDED_MODULES = {
     "sklearn",
     "onnx",
     "onnxruntime",
+    # Added 2026-07-31 with REQ-SIZE-01's revision. Neither is referenced by any mmcli
+    # source file — both arrived transitively — and excluding them took the macOS build
+    # from 31,840,752 to 25,256,016 bytes with analyze, init --list and datasets list all
+    # verified unchanged.
+    "PIL",
+    "cryptography",
 }
 
 
@@ -175,10 +186,10 @@ class TestExcludesList:
         modules = _read_excludes_list()
         assert modules, "scripts/pyinstaller_excludes.txt must not be empty"
 
-    def test_excludes_file_has_thirteen_expected_entries(self):
+    def test_excludes_file_has_the_expected_entries(self):
         modules = _read_excludes_list()
         assert set(modules) == EXPECTED_EXCLUDED_MODULES
-        assert len(modules) == 13
+        assert len(modules) == len(EXPECTED_EXCLUDED_MODULES)
 
     def test_excludes_file_never_lists_numpy_or_pandas(self):
         modules = set(_read_excludes_list())
