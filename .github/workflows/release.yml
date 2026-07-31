@@ -114,6 +114,36 @@ jobs:
         run: ${{ matrix.binary }} --version
         shell: bash
 
+      - name: Gate — binary size ceiling
+        # Reads scripts/binary_size_ceiling.txt at runtime; the ceiling is never a
+        # literal in this file (F-1: a number repeated in the workflow, the test and
+        # the build script is a number that will disagree with itself). `wc -c` is
+        # used for the byte count rather than `stat -f%z`/`stat -c%s` because those
+        # flags are BSD-only / GNU-only respectively and this step runs identically
+        # on all three runners, including Windows' Git Bash.
+        shell: bash
+        run: |
+          BINARY="${{ matrix.binary }}"
+          SIZE=$(wc -c < "$BINARY")
+          CEILING=$(cat scripts/binary_size_ceiling.txt)
+          echo "binary_size_ceiling.txt: ${CEILING} bytes"
+          echo "measured artifact size:  ${SIZE} bytes"
+          if [ "$SIZE" -gt "$CEILING" ]; then
+            echo "FAIL: ${BINARY} is ${SIZE} bytes, exceeding the ${CEILING}-byte ceiling in scripts/binary_size_ceiling.txt (REQ-SIZE-01)"
+            exit 1
+          fi
+          echo "OK: ${BINARY} (${SIZE} bytes) is within the ${CEILING}-byte ceiling"
+
+      - name: Gate — bundled dataset payload is non-empty
+        # The runtime check that 10-03's staged --add-data allowlist actually landed
+        # inside this platform's binary. PyInstaller accepts a wrong --add-data
+        # separator (e.g. the POSIX "src:dst" form on Windows) without complaint,
+        # producing a binary with an empty bundle and a successful build; `--version`
+        # above still passes on such a binary, so only a runtime probe of the actual
+        # bundled dataset catches it before it reaches a user's `init --dataset`.
+        shell: bash
+        run: "${{ matrix.binary }} datasets path generic_audio_classification"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
