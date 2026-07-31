@@ -14,6 +14,104 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Dataset mirror healthcheck (10-CONTEXT.md D-01) — confirms the release
+  # carrying the nine downloadable dataset zips is reachable and correctly
+  # tagged, before any binary is built. This is a reachability check only: it
+  # downloads no payload. CI's own checkout holds only
+  # generic_audio_classification.zip (.gitignore ignores the other nine), so an
+  # artifact-level dataset assertion here would pass vacuously; verifying the
+  # release's own asset metadata (name + size, via `gh release view --json`) is
+  # what actually catches the realistic failure — a deleted or mis-tagged
+  # release (e.g. a typo'd tag or a forgotten --latest=false) — without paying
+  # for ~131 MB of downloads per run. Byte-level content verification is a
+  # separate, deliberately heavier gate: scripts/verify_dataset_digests.py, run
+  # at release-preflight time (see docs/RELEASING.md), not here.
+  # ---------------------------------------------------------------------------
+  mirror-healthcheck:
+    runs-on: ubuntu-latest
+    name: Dataset mirror healthcheck
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install mmcli (lightweight — PyYAML + tqdm only, no training engine)
+        run: pip install -e .
+
+      - name: Verify the mirror release is reachable and correctly tagged
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          from mmcli.datasets import (
+              DATASET_REGISTRY,
+              DATASETS_DEFAULT_VERSION,
+              DATASETS_MIRROR_TAG_PREFIX,
+          )
+
+          REPO = "musicalplatypus/tinyml-cli"
+          tag = f"{DATASETS_MIRROR_TAG_PREFIX}{DATASETS_DEFAULT_VERSION}"
+          expected = sorted(
+              entry["filename"] for entry in DATASET_REGISTRY.values() if entry.get("ti_name")
+          )
+
+          result = subprocess.run(
+              [
+                  "gh", "release", "view", tag,
+                  "--repo", REPO,
+                  "--json", "tagName,assets",
+              ],
+              capture_output=True, text=True,
+          )
+          if result.returncode != 0:
+              print(
+                  f"FATAL: mirror release '{tag}' not reachable via `gh release view` "
+                  f"(missing release, or a mis-tagged/forgotten --latest=false publish?): "
+                  f"{result.stderr.strip()}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          data = json.loads(result.stdout)
+          if data.get("tagName") != tag:
+              print(
+                  f"FATAL: gh reported tagName {data.get('tagName')!r}, expected {tag!r} — "
+                  f"the mirror release appears mis-tagged",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          assets = {a["name"]: a.get("size", 0) for a in data.get("assets", [])}
+          missing = [name for name in expected if name not in assets]
+          if missing:
+              print(
+                  f"FATAL: mirror release '{tag}' is missing expected asset(s): {missing}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          zero_size = [name for name in expected if assets[name] <= 0]
+          if zero_size:
+              print(
+                  f"FATAL: mirror release '{tag}' has zero-byte asset(s): {zero_size}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          print(f"OK: mirror release '{tag}' has all {len(expected)} expected assets, all non-zero size (no payload downloaded).")
+          for name in expected:
+              print(f"  {name}: {assets[name]} bytes")
+          PY
+
+  # ---------------------------------------------------------------------------
   # Run tests first — fail fast before building
   # ---------------------------------------------------------------------------
   test:
@@ -69,7 +167,7 @@ jobs:
   # Build binaries (after tests pass)
   # ---------------------------------------------------------------------------
   build:
-    needs: test
+    needs: [test, mirror-healthcheck]
     strategy:
       matrix:
         include:
@@ -143,6 +241,28 @@ jobs:
         # bundled dataset catches it before it reaches a user's `init --dataset`.
         shell: bash
         run: "${{ matrix.binary }} datasets path generic_audio_classification"
+
+      - name: Gate — startup regression (loose bound, catastrophic regressions only)
+        # REQ-SIZE-01's 8s bound was measured on the maintainer's laptop (6.1-6.6s
+        # actual); hosted runners are slower and load-variable, macOS worst of all.
+        # 25s gives roughly 3x that laptop measurement's headroom, wide enough to
+        # absorb normal runner variance while still catching a catastrophic
+        # regression such as a re-bundled multi-hundred-MB training engine, which
+        # would push real startup time far beyond this bound rather than merely
+        # brushing against it. It will not notice a 6s -> 12s drift — that is a
+        # deliberate trade explained in 10-CONTEXT.md D-02, not an oversight.
+        shell: bash
+        run: |
+          STARTUP_CEILING_SECONDS=25
+          SECONDS=0
+          "${{ matrix.binary }}" --version > /dev/null
+          ELAPSED=$SECONDS
+          echo "startup: ${ELAPSED}s (ceiling: ${STARTUP_CEILING_SECONDS}s)"
+          if [ "$ELAPSED" -gt "$STARTUP_CEILING_SECONDS" ]; then
+            echo "FAIL: startup took ${ELAPSED}s, exceeding the ${STARTUP_CEILING_SECONDS}s regression-gate bound"
+            exit 1
+          fi
+          echo "OK: startup ${ELAPSED}s within ${STARTUP_CEILING_SECONDS}s"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
