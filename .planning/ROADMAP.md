@@ -92,7 +92,7 @@ and updated without rebuilding the binary.
   dataset obligations of cutting a release and why they exist
 
 **Depends on:** Phase 9
-**Plans:** 5/11 plans executed
+**Plans:** 6/11 plans executed
 
 Plans:
 - [x] 10-01-PLAN.md — wave 1 — Enforce PyInstaller exclusions in all three build scripts + single-source size ceiling (REQ-SIZE-01/02)
@@ -104,7 +104,7 @@ Plans:
 - [ ] 10-08-PLAN.md — wave 4 — Wire the new regression guards into CI + per-artifact size and empty-bundle gates (REQ-SIZE-01/02)
 - [ ] 10-09-PLAN.md — wave 5 — PlatypusStudio standalone dataset library + `mmcli datasets remove`, cross-repo (REQ-UX-02)
 - [ ] 10-07-PLAN.md — wave 5 — docs/RELEASING.md, CLI help, Sphinx (REQ-DOC-01, REQ-DATA-05)
-- [ ] 10-10-PLAN.md — wave 5 — Stop the wheel and sdist shipping the nine mirrored datasets: narrow `[tool.setuptools.package-data]` to the one locally-authored zip (the pip-channel sibling of 10-03's `BUNDLED_DATASETS` allowlist), guard it in tests/test_build_config.py, and verify against a real wheel + sdist and a clean-venv install that pulls from the live mirror (REQ-SIZE-03). A wheel built from the current glob measures 108.2 MB.
+- [x] 10-10-PLAN.md — wave 5 — Stop the wheel and sdist shipping the nine mirrored datasets: narrow `[tool.setuptools.package-data]` to the one locally-authored zip (the pip-channel sibling of 10-03's `BUNDLED_DATASETS` allowlist), guard it in tests/test_build_config.py, and verify against a real wheel + sdist and a clean-venv install that pulls from the live mirror (REQ-SIZE-03). A wheel built from the current glob measures 108.2 MB.
 
 ---
 
