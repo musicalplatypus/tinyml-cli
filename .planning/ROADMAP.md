@@ -67,7 +67,10 @@ and updated without rebuilding the binary.
   regression rather than to describe an aspiration.
 
   Consequence: `scripts/binary_size_ceiling.txt` is `27262976`, which a real build passes, so
-  10-08's CI size gate is unblocked.
+  10-08's CI size gate is unblocked. This revision was made outside any plan; it is
+  retro-documented in
+  `.planning/phases/10-dataset-distribution-and-binary-size/unplanned-work.md` §1, and 10-08
+  inherits it rather than re-deciding it.
 - REQ-SIZE-02: PyInstaller must not bundle the training engine in any of the three published
   artifacts (Linux, Windows, macOS); a build that loses the exclusions fails CI — meaning the
   guard runs inside `.github/workflows/` — rather than shipping a 260 MB binary
