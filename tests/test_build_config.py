@@ -1,5 +1,6 @@
-"""Source-level regression guard over the PyInstaller exclude flags and the binary
-size ceiling, shared by all three release build scripts.
+"""Source-level regression guard over the PyInstaller exclude flags, the binary size
+ceiling shared by all three release build scripts, and the Python distribution's
+`package-data` allowlist.
 
 This is a source-level assertion deliberately, not a build-and-measure test: building
 the binary takes minutes per platform and needs PyInstaller and its per-target
@@ -11,6 +12,7 @@ excludes=[] in the generated spec enforced nothing).
 
 The built-artifact size check itself belongs in the release CI job (10-08), not here.
 """
+import fnmatch
 import re
 from pathlib import Path
 
@@ -19,6 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXCLUDES_FILE = REPO_ROOT / "scripts" / "pyinstaller_excludes.txt"
 CEILING_FILE = REPO_ROOT / "scripts" / "binary_size_ceiling.txt"
+PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
 
 BUILD_SCRIPTS = [
     REPO_ROOT / "build_macos.sh",
@@ -79,6 +82,35 @@ def _read_excludes_list():
     """Parse scripts/pyinstaller_excludes.txt: one module name per line."""
     lines = EXCLUDES_FILE.read_text().splitlines()
     return [line.strip() for line in lines if line.strip()]
+
+
+def _package_data_patterns():
+    """The patterns in pyproject.toml's `[tool.setuptools.package-data]` `mmcli` array.
+
+    Parsed by regex over the raw text rather than with `tomllib`: both workflows pin
+    python 3.10, where tomllib is not in the stdlib, and neither installs tomli. Adding
+    a parser dependency for one assertion is the call 10-08 declined to make for PyYAML.
+
+    Raises rather than returning [] when the section or array is missing, so a
+    restructured pyproject.toml fails loudly. An empty return would silently satisfy
+    every "no mirrored dataset matches" assertion downstream — a guard that cannot fail.
+    """
+    text = _strip_comment_lines(PYPROJECT_FILE.read_text())
+    section = re.search(
+        r"^\[tool\.setuptools\.package-data\]\s*$(.*?)(?=^\[|\Z)",
+        text, re.MULTILINE | re.DOTALL,
+    )
+    assert section, (
+        "no [tool.setuptools.package-data] section in pyproject.toml — either it was "
+        "removed (the wheel then ships no datasets at all) or renamed, and this guard "
+        "can no longer see what is packaged"
+    )
+    array = re.search(r"\bmmcli\s*=\s*\[(.*?)\]", section.group(1), re.DOTALL)
+    assert array, (
+        "no `mmcli = [...]` array under [tool.setuptools.package-data] — this guard "
+        "cannot verify what the wheel and sdist ship"
+    )
+    return re.findall(r"['\"]([^'\"]+)['\"]", array.group(1))
 
 
 def _strip_comment_lines(text):
@@ -293,6 +325,106 @@ class TestBuildScriptsBundleOnlyTheOneLocalDataset:
             f"{script_path.name}'s BUNDLED_DATASETS allowlist stages mirrored "
             f"dataset(s) {named} — only {BUNDLED_DATASET_FILENAME} may be staged"
         )
+
+
+class TestPackageDataBundlesOnlyTheOneLocalDataset:
+    """The packaging-channel sibling of the class above.
+
+    The build scripts stop the PyInstaller binary shipping the nine mirrored datasets;
+    `[tool.setuptools.package-data]` is the same decision for the wheel and the sdist,
+    and it was missed when the binary was unbundled. A wheel built from a working tree
+    holding all ten measured 108.2 MB (REQ-SIZE-03).
+
+    Deliberately a source-level check rather than a build-and-measure one, and here
+    that is the *stronger* choice, not the cheaper one: `.gitignore` ignores
+    `mmcli/example_datasets/*.zip` and only the audio zip is tracked, so a CI checkout
+    holds one dataset and a re-added wildcard would still produce a small artifact
+    there. Measuring the built wheel in CI would pass vacuously.
+    """
+
+    def test_package_data_matches_exactly_the_one_bundled_dataset(self):
+        patterns = _package_data_patterns()
+        # fnmatch is used rather than string equality so an equivalent-but-differently
+        # written glob is judged on what setuptools would actually select. Note fnmatch
+        # lets `*` cross `/` while setuptools' glob does not, which makes this strictly
+        # more willing to report a match — it can over-report a mirrored dataset, never
+        # miss one. That is the safe direction for a guard.
+        bundled = f"example_datasets/{BUNDLED_DATASET_FILENAME}"
+        assert any(fnmatch.fnmatchcase(bundled, p) for p in patterns), (
+            f"package-data no longer ships {BUNDLED_DATASET_FILENAME}; it is the one "
+            f"dataset with no mirror asset, so a pip install can never obtain it "
+            f"(patterns: {patterns})"
+        )
+        for name in sorted(MIRRORED_DATASET_FILENAMES):
+            target = f"example_datasets/{name}"
+            matched = [p for p in patterns if fnmatch.fnmatchcase(target, p)]
+            assert not matched, (
+                f"package-data pattern(s) {matched} ship {name} inside the wheel/sdist. "
+                f"It is fetched from the release mirror on demand; packaging it re-adds "
+                f"the payload REQ-SIZE-03 removed"
+            )
+
+    def test_package_data_names_no_wildcard_over_example_datasets(self):
+        # Belt to the above's braces, and the assertion that survives if the ten-name
+        # list ever drifts: it names the actual mistake ("a wildcard came back") instead
+        # of reporting ten fnmatch results.
+        offenders = [
+            p for p in _package_data_patterns()
+            if p.startswith("example_datasets/") and any(c in p for c in "*?[")
+        ]
+        assert not offenders, (
+            f"package-data uses wildcard(s) {offenders} over example_datasets/. List the "
+            f"one bundled dataset literally — a wildcard silently re-ships every zip that "
+            f"happens to be in the working tree at build time"
+        )
+
+    def test_package_data_still_ships_the_data_yaml_glob(self):
+        # Over-narrowing is the live risk of this change: mmcli/data/schema.yaml is
+        # unrelated to datasets, is tracked in git, and dropping it is a runtime
+        # regression rather than a size win.
+        patterns = _package_data_patterns()
+        assert any(fnmatch.fnmatchcase("data/schema.yaml", p) for p in patterns), (
+            f"package-data no longer ships mmcli/data/*.yaml (patterns: {patterns}) — "
+            f"narrowing the dataset glob must not narrow the yaml glob"
+        )
+
+    def test_guard_constants_still_match_the_dataset_registry(self):
+        """Protects both this class and TestBuildScriptsBundleOnlyTheOneLocalDataset.
+
+        Both key off the same two constants, so a dataset added to the registry but not
+        to them would be unguarded in the binary *and* the wheel simultaneously.
+        """
+        from mmcli.datasets import DATASET_REGISTRY
+
+        mirrored = {e["filename"] for e in DATASET_REGISTRY.values() if e.get("ti_name")}
+        bundled = {e["filename"] for e in DATASET_REGISTRY.values() if not e.get("ti_name")}
+        assert mirrored == MIRRORED_DATASET_FILENAMES, (
+            f"DATASET_REGISTRY's fetchable datasets {mirrored} no longer match "
+            f"MIRRORED_DATASET_FILENAMES {MIRRORED_DATASET_FILENAMES}. Update the constant, "
+            f"or a newly added dataset ships unguarded in both the binary and the wheel"
+        )
+        assert bundled == {BUNDLED_DATASET_FILENAME}, (
+            f"DATASET_REGISTRY's non-fetchable datasets {bundled} no longer match "
+            f"{{{BUNDLED_DATASET_FILENAME!r}}} — the set of datasets that must be packaged "
+            f"has changed"
+        )
+
+    def test_no_manifest_in_reintroduces_the_mirrored_datasets(self):
+        # No MANIFEST.in exists today, and setuptools derives sdist package data from
+        # package-data, so narrowing it covers both artifacts. A MANIFEST.in could
+        # re-include the zips in the sdist behind package-data's back; this keeps adding
+        # one a deliberate act.
+        manifest = REPO_ROOT / "MANIFEST.in"
+        if not manifest.exists():
+            return
+        for line in _strip_comment_lines(manifest.read_text()).splitlines():
+            directive = line.strip().lower()
+            if not directive.startswith(("include", "graft", "recursive-include")):
+                continue
+            assert "example_datasets" not in directive and ".zip" not in directive, (
+                f"MANIFEST.in line {line.strip()!r} re-includes dataset zips in the sdist, "
+                f"bypassing the package-data allowlist (REQ-SIZE-03)"
+            )
 
 
 class TestBinarySizeCeiling:

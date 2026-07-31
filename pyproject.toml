@@ -20,7 +20,13 @@ where = ["."]
 include = ["mmcli*"]
 
 [tool.setuptools.package-data]
-mmcli = ["example_datasets/*.zip", "data/*.yaml"]
+# An allowlist, not a filter. generic_audio_classification.zip is the one locally-authored
+# dataset: it has no `ti_name`, so it has no mirror asset and cannot be fetched. The other
+# nine are downloaded on demand by fetch_dataset() from the GitHub release mirror, exactly
+# as they are for the binary — see BUNDLED_DATASETS in build_macos.sh / build_linux.sh /
+# build_windows.ps1, which is the same decision on the PyInstaller side.
+# Re-adding a wildcard here re-ships 125 MB of datasets in the wheel and sdist (REQ-SIZE-03).
+mmcli = ["example_datasets/generic_audio_classification.zip", "data/*.yaml"]
 
 [tool.pytest.ini_options]
 markers = [
