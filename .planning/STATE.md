@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: "2026-07-31T15:39:41.127Z"
+last_updated: "2026-07-31T16:09:04.581Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -198,7 +198,7 @@ Test infrastructure is being established with centralized fixtures in conftest.p
 
 ## Session Continuity
 
-Last session: 2026-07-31T15:39:41.120Z
+Last session: 2026-07-31T16:06:40.156Z
 Resumed from: Phase 2 UAT verification passed (118 tests), Phase 3 ready for execution
 
 **Phase 2 Status:** COMPLETE ✅  
@@ -452,6 +452,65 @@ one honestly-reported overshoot.**
 
 - See `.planning/phases/10-dataset-distribution-and-binary-size/10-05-SUMMARY.md` for full
   detail, including the exact commands run and their outputs.
+
+### Session: 2026-07-31 (Phase 10 Plan 08 execution — COMPLETE)
+
+**Plan 10-08 — Wire the phase-10 regression guards into CI + per-artifact release-build
+gates — COMPLETE, plus two context-driven additions.**
+
+- `10-CONTEXT.md` (gathered after this plan was written) was read first; its D-01/D-02/D-03
+  decisions were additive to the plan's two tasks, not a rewrite — confirmed during
+  execution rather than assumed.
+
+- **Task 1 (`a0e919c`):** both `.github/workflows/test-cli.yml` and `release.yml` now run
+  an identical pytest invocation naming all six phase-10 test files (`test_cli_integration.py`,
+  `test_tier4_cli.py`, `test_build_config.py`, `test_datasets_download.py`,
+  `test_datasets_cli.py`, `test_ci_workflows.py`), with `-k "not TestInitDatasetExtractReal"`
+  intact. Every guard this phase built — 36 tests in `test_build_config.py`, 50 in
+  `test_datasets_download.py`, 24 in `test_datasets_cli.py` — was previously collected by
+  neither workflow. `tests/test_ci_workflows.py` (new, 6 tests) is the drift guard: both
+  workflows must name an identical test-file set, that set must be a superset of the
+  required six, every named path must exist on disk, and the deselection must survive
+  verbatim. Deliberately broke it (removed one file from `test-cli.yml`'s list) to confirm
+  it fails the two expected assertions, then restored.
+
+- **Task 2 (`c12c481`):** `release.yml`'s `build` job gained a per-artifact size gate
+  (reads `scripts/binary_size_ceiling.txt` at runtime via `wc -c`, never a YAML literal)
+  and a bundle-non-empty probe (`datasets path generic_audio_classification`), both before
+  "Upload artifact". Rehearsed locally against the real macOS `dist/mmcli` (25,256,016
+  bytes, under the 27,262,976-byte ceiling): both gates pass.
+
+- **Context-driven addition (`0c3f650`, D-01/D-02 from `10-CONTEXT.md`):** a new
+  `mirror-healthcheck` job verifies the `datasets-01_03_00` release is reachable and
+  correctly tagged via `gh release view --json tagName,assets` — no payload downloaded,
+  since CI's own checkout holds only 1 of the 10 dataset zips and an artifact-level
+  assertion would pass vacuously. Rehearsed for real against the live mirror (9/9 assets
+  present, non-zero size) and against a deliberately wrong tag (fails with `release not
+  found`, exit 1). Also added a startup regression gate at 25s (bash `SECONDS` builtin,
+  portable across all three runners) — roughly 3x the ~6-6.6s measured on the maintainer's
+  laptop, wide enough for hosted-runner variance while still catching a catastrophic
+  regression. No wheel-size gate was added (would pass vacuously per `10-10-SUMMARY.md`);
+  no datasets were seeded into CI; no test was deselected to make this plan pass.
+
+- Full local six-file pytest invocation, exactly as both workflows now run it (with
+  `MMCLI_PYTHON=$HOME/.venv-tinyml/bin/python`): **161 passed, 20 deselected**.
+
+- **This agent cannot run GitHub Actions.** Both workflow files were confirmed syntactically
+  valid YAML and every gate's logic was rehearsed locally against real artifacts (the
+  macOS binary, the live GitHub release), but no actual Actions run was observed — stated
+  plainly in `10-08-SUMMARY.md` rather than implying a green CI run.
+
+- `gsd-sdk query state.advance-plan`/`state.update-progress`/`state.add-decision` again
+  returned parse errors against this file's legacy narrative format (same pattern as every
+  prior Phase 10 session above); `state.record-session` succeeded (timestamp fields only).
+  `gsd-sdk query roadmap.update-plan-progress 10` succeeded and flipped `10-08-PLAN.md`'s
+  checkbox in `.planning/ROADMAP.md` (now 7/11 plans executed). `gsd-sdk query
+  requirements.mark-complete REQ-SIZE-01 REQ-SIZE-02` reported `REQUIREMENTS.md not found`
+  — this project tracks requirements inline in `ROADMAP.md`, not a separate file, consistent
+  with every prior Phase 10 session.
+
+- See `.planning/phases/10-dataset-distribution-and-binary-size/10-08-SUMMARY.md` for full
+  detail, including the exact verification commands and their real output.
 
 ### Pending Todos
 
