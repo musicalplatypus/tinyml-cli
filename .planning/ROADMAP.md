@@ -55,6 +55,19 @@ and updated without rebuilding the binary.
 - REQ-SIZE-02: PyInstaller must not bundle the training engine in any of the three published
   artifacts (Linux, Windows, macOS); a build that loses the exclusions fails CI — meaning the
   guard runs inside `.github/workflows/` — rather than shipping a 260 MB binary
+- REQ-SIZE-03: the Python distribution artifacts (wheel and sdist) must not carry the nine
+  mirrored datasets either — only the locally-authored `generic_audio_classification.zip`
+  ships inside the package, so `pip install mmcli` fetches the rest from the mirror like every
+  other install path. (Added 2026-07-28: a wheel built from the current `package-data` glob
+  measures 108.2 MB, of which 124.9 MB uncompressed is the ten dataset zips. Phase 10
+  unbundled the PyInstaller binary only; the pip channel was never covered by REQ-SIZE-01/02,
+  which are both written about `dist/mmcli`.)
+  **Scope of the bug, verified 2026-07-31:** `.gitignore:10` ignores
+  `mmcli/example_datasets/*.zip` and only `generic_audio_classification.zip` is tracked, so a
+  build from a *clean clone* already produces a small wheel. The 108.2 MB figure is a property
+  of a maintainer working tree that holds all ten. That makes this a release-safety fix — it
+  stops the person who cuts a release from publishing a fat wheel — rather than something every
+  pip user hits today. It also means a CI artifact-size gate would pass vacuously.
 - REQ-DATA-01: Datasets resolvable via `MMCLI_DATASETS` → bundled → cache → download
 - REQ-DATA-02: Any registry entry carrying a `ti_name` (i.e. any dataset that can be
   fetched) must carry a `sha256`, enforced at import and verified before extraction; a
@@ -79,7 +92,7 @@ and updated without rebuilding the binary.
   dataset obligations of cutting a release and why they exist
 
 **Depends on:** Phase 9
-**Plans:** 5/10 plans executed
+**Plans:** 5/11 plans executed
 
 Plans:
 - [x] 10-01-PLAN.md — wave 1 — Enforce PyInstaller exclusions in all three build scripts + single-source size ceiling (REQ-SIZE-01/02)
@@ -91,6 +104,7 @@ Plans:
 - [ ] 10-08-PLAN.md — wave 4 — Wire the new regression guards into CI + per-artifact size and empty-bundle gates (REQ-SIZE-01/02)
 - [ ] 10-09-PLAN.md — wave 5 — PlatypusStudio standalone dataset library + `mmcli datasets remove`, cross-repo (REQ-UX-02)
 - [ ] 10-07-PLAN.md — wave 5 — docs/RELEASING.md, CLI help, Sphinx (REQ-DOC-01, REQ-DATA-05)
+- [ ] 10-10-PLAN.md — wave 5 — Stop the wheel and sdist shipping the nine mirrored datasets: narrow `[tool.setuptools.package-data]` to the one locally-authored zip (the pip-channel sibling of 10-03's `BUNDLED_DATASETS` allowlist), guard it in tests/test_build_config.py, and verify against a real wheel + sdist and a clean-venv install that pulls from the live mirror (REQ-SIZE-03). A wheel built from the current glob measures 108.2 MB.
 
 ---
 
