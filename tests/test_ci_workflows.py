@@ -1,0 +1,137 @@
+"""Guard that .github/workflows/test-cli.yml and release.yml actually collect the
+phase-10 regression-guard test files, and that the two workflows never drift apart.
+
+Every guard phase 10 built (test_build_config.py's 36 assertions, test_datasets_download.py's
+50 tests, test_datasets_cli.py's contract/D-5 tests) was inert in CI before 10-08: both
+workflows' pytest invocations named only the two pre-existing Tier 4 files, so removing a
+PyInstaller exclusion or breaking the MMCLI_DATASETS air-gap policy would pass every CI run
+silently. This file is the guard that the fix holds and does not quietly regress:
+
+  1. Each workflow contains exactly one `python -m pytest` invocation (so there's exactly one
+     place either file's collection is decided).
+  2. The set of test files named by that invocation is identical between the two workflows —
+     the drift guard. A one-sided edit (added to test-cli.yml, forgotten in release.yml, or
+     vice versa) fails here instead of surfacing as a silent gap discovered later.
+  3. That set is a superset of the required six files, named below in one place with a
+     comment recording that dropping one from CI is a decision, not routine cleanup.
+  4. Every test path named by either workflow actually exists on disk, so a rename that
+     forgets to update the workflow fails here rather than as a pytest "file not found"
+     collection error during a real release run.
+
+Parses the raw workflow text with a regex rather than a full YAML load: the assertion is
+about the literal shell command the workflow runs, and a YAML round-trip that "helpfully"
+re-serialises or re-wraps the block-scalar string would weaken exactly what this file exists
+to check. Neither workflow installs PyYAML, and adding it here — for one assertion — is the
+same call 10-08 declined to make elsewhere.
+"""
+import re
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEST_CLI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test-cli.yml"
+RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+WORKFLOWS = [TEST_CLI_WORKFLOW, RELEASE_WORKFLOW]
+
+# Every file in this set must be collected by BOTH workflows' pytest invocation. Removing one
+# is a decision about what CI enforces before a release, not a cleanup — if a test file is
+# genuinely retired, update this constant deliberately, in the same change that removes it
+# from both workflows.
+REQUIRED_TEST_FILES = {
+    "tests/test_cli_integration.py",
+    "tests/test_tier4_cli.py",
+    "tests/test_build_config.py",
+    "tests/test_datasets_download.py",
+    "tests/test_datasets_cli.py",
+    "tests/test_ci_workflows.py",
+}
+
+# Matches a `python -m pytest` invocation through to the end of the existing deliberate
+# deselection, across either the single-line form or the `run: |` block-scalar,
+# backslash-continued form Task 1 introduced. DOTALL so the continuation lines (each their
+# own physical line, backslash-joined) are captured as one block.
+PYTEST_INVOCATION_RE = re.compile(
+    r"python -m pytest\b(.*?)-k\s+\"not TestInitDatasetExtractReal\"",
+    re.DOTALL,
+)
+
+TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./]+\.py")
+
+
+def _read(path: Path) -> str:
+    assert path.exists(), f"workflow file missing: {path}"
+    return path.read_text()
+
+
+def _pytest_invocations(text: str):
+    """All `python -m pytest ... -k "not TestInitDatasetExtractReal"` blocks in the text."""
+    return PYTEST_INVOCATION_RE.findall(text)
+
+
+def _named_test_files(invocation_body: str) -> set:
+    return set(TEST_PATH_RE.findall(invocation_body))
+
+
+def test_both_workflow_files_exist():
+    for path in WORKFLOWS:
+        assert path.exists(), f"expected workflow file not found: {path}"
+
+
+def test_each_workflow_has_exactly_one_pytest_invocation():
+    for path in WORKFLOWS:
+        text = _read(path)
+        invocations = _pytest_invocations(text)
+        assert len(invocations) == 1, (
+            f"{path.name} must contain exactly one `python -m pytest ... -k \"not "
+            f"TestInitDatasetExtractReal\"` invocation, found {len(invocations)}"
+        )
+
+
+def test_workflows_name_the_same_set_of_test_files():
+    """The drift guard: a one-sided edit to either workflow fails here."""
+    named = {}
+    for path in WORKFLOWS:
+        [invocation] = _pytest_invocations(_read(path))
+        named[path.name] = _named_test_files(invocation)
+
+    test_cli_set = named[TEST_CLI_WORKFLOW.name]
+    release_set = named[RELEASE_WORKFLOW.name]
+    assert test_cli_set == release_set, (
+        f"test-cli.yml and release.yml collect different test files — they must be "
+        f"identical. Only in test-cli.yml: {sorted(test_cli_set - release_set)}. "
+        f"Only in release.yml: {sorted(release_set - test_cli_set)}."
+    )
+
+
+def test_named_set_is_a_superset_of_the_required_files():
+    for path in WORKFLOWS:
+        [invocation] = _pytest_invocations(_read(path))
+        named = _named_test_files(invocation)
+        missing = REQUIRED_TEST_FILES - named
+        assert not missing, (
+            f"{path.name}'s pytest invocation is missing required test file(s) "
+            f"{sorted(missing)} — every guard this phase built must actually run in CI"
+        )
+
+
+def test_every_named_test_path_exists_on_disk():
+    for path in WORKFLOWS:
+        [invocation] = _pytest_invocations(_read(path))
+        for test_path in _named_test_files(invocation):
+            full_path = REPO_ROOT / test_path
+            assert full_path.exists(), (
+                f"{path.name} names {test_path}, which does not exist on disk — a "
+                f"rename that forgot to update the workflow would otherwise surface only "
+                f"as a pytest collection error during a real CI run"
+            )
+
+
+def test_deselection_is_still_intact_in_both_workflows():
+    """The `-k "not TestInitDatasetExtractReal"` deselection must survive verbatim —
+    it protects test_cli_integration.py / test_tier4_cli.py, not something this plan
+    should be weakening while wiring in new files."""
+    for path in WORKFLOWS:
+        text = _read(path)
+        assert '-k "not TestInitDatasetExtractReal"' in text, (
+            f"{path.name} no longer carries the exact "
+            f'`-k "not TestInitDatasetExtractReal"` deselection'
+        )

@@ -55,7 +55,15 @@ jobs:
           pip install pytest
 
       - name: Run tests
-        run: python -m pytest tests/test_cli_integration.py tests/test_tier4_cli.py -v --tb=short -k "not TestInitDatasetExtractReal"
+        run: |
+          python -m pytest \
+            tests/test_cli_integration.py \
+            tests/test_tier4_cli.py \
+            tests/test_build_config.py \
+            tests/test_datasets_download.py \
+            tests/test_datasets_cli.py \
+            tests/test_ci_workflows.py \
+            -v --tb=short -k "not TestInitDatasetExtractReal"
 
   # ---------------------------------------------------------------------------
   # Build binaries (after tests pass)
