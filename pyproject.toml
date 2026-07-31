@@ -15,6 +15,13 @@ dependencies = [
 [project.scripts]
 mmcli = "mmcli.cli:main"
 
+[tool.setuptools]
+# Must be false for the package-data allowlist below to mean anything. Setuptools defaults
+# this to true for pyproject.toml projects, and with it on, package-data is ADDITIVE — every
+# file sitting in the package directory is swept in regardless, so narrowing the glob alone
+# left all ten datasets in the wheel and sdist (measured: 108.2 MB either way).
+include-package-data = false
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["mmcli*"]
@@ -26,6 +33,13 @@ include = ["mmcli*"]
 # as they are for the binary — see BUNDLED_DATASETS in build_macos.sh / build_linux.sh /
 # build_windows.ps1, which is the same decision on the PyInstaller side.
 # Re-adding a wildcard here re-ships 125 MB of datasets in the wheel and sdist (REQ-SIZE-03).
+#
+# Measured on macOS 2026-07-31, building from a tree holding all ten zips:
+#   wheel 108.22 MB -> 0.10 MB, sdist 108.26 MB -> 0.17 MB, installed package 608 KB.
+# Three separate levers were needed and each was verified to matter on its own: this
+# allowlist, include-package-data = false above (without it package-data is additive and
+# nothing here binds), and MANIFEST.in (the sdist keeps its own file list). Narrowing only
+# this line left both artifacts at 108 MB.
 mmcli = ["example_datasets/generic_audio_classification.zip", "data/*.yaml"]
 
 [tool.pytest.ini_options]

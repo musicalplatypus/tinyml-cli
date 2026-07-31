@@ -1,0 +1,11 @@
+# The sdist does not follow [tool.setuptools.package-data]; it has its own file list, and
+# without these two lines it ships all ten dataset zips (measured: 108.3 MB) even when the
+# wheel correctly ships one. Order matters — MANIFEST.in directives apply in sequence, so the
+# exclude sweeps the datasets out and the include puts back the single locally-authored one.
+#
+# generic_audio_classification.zip has no `ti_name` and so no mirror asset: it cannot be
+# fetched and must travel inside the distribution. The other nine come from the GitHub
+# release mirror via fetch_dataset() (REQ-SIZE-03). Keep this in step with the allowlist in
+# pyproject.toml's package-data and with BUNDLED_DATASETS in the three build scripts.
+exclude mmcli/example_datasets/*.zip
+include mmcli/example_datasets/generic_audio_classification.zip

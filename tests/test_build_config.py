@@ -409,22 +409,60 @@ class TestPackageDataBundlesOnlyTheOneLocalDataset:
             f"has changed"
         )
 
-    def test_no_manifest_in_reintroduces_the_mirrored_datasets(self):
-        # No MANIFEST.in exists today, and setuptools derives sdist package data from
-        # package-data, so narrowing it covers both artifacts. A MANIFEST.in could
-        # re-include the zips in the sdist behind package-data's back; this keeps adding
-        # one a deliberate act.
+    def test_manifest_in_keeps_the_mirrored_datasets_out_of_the_sdist(self):
+        """MANIFEST.in is required, because the sdist does not follow package-data.
+
+        Measured while implementing this: with package-data narrowed and
+        include-package-data off, the wheel shipped one zip while the sdist still shipped
+        all ten (108.3 MB). The sdist builds its own file list, so it needs its own
+        exclude — and `python -m build` builds the wheel *from* the sdist, which makes a
+        fat sdist a live route back to a fat wheel.
+        """
         manifest = REPO_ROOT / "MANIFEST.in"
-        if not manifest.exists():
-            return
-        for line in _strip_comment_lines(manifest.read_text()).splitlines():
-            directive = line.strip().lower()
-            if not directive.startswith(("include", "graft", "recursive-include")):
-                continue
-            assert "example_datasets" not in directive and ".zip" not in directive, (
-                f"MANIFEST.in line {line.strip()!r} re-includes dataset zips in the sdist, "
-                f"bypassing the package-data allowlist (REQ-SIZE-03)"
-            )
+        assert manifest.exists(), (
+            "MANIFEST.in is gone — without it the sdist ships all ten dataset zips "
+            "regardless of package-data (REQ-SIZE-03)"
+        )
+        lines = [
+            line.strip() for line in _strip_comment_lines(manifest.read_text()).splitlines()
+            if line.strip()
+        ]
+        assert "exclude mmcli/example_datasets/*.zip" in lines, (
+            f"MANIFEST.in no longer excludes the dataset zips from the sdist "
+            f"(directives: {lines})"
+        )
+        # Only the one packageable dataset may be added back, and it must come after the
+        # exclude — MANIFEST.in applies its directives in order, so an include placed first
+        # is undone by the sweep that follows it.
+        includes = [
+            line for line in lines
+            if line.lower().startswith(("include", "graft", "recursive-include"))
+            and ("example_datasets" in line or ".zip" in line)
+        ]
+        assert includes == [
+            f"include mmcli/example_datasets/{BUNDLED_DATASET_FILENAME}"
+        ], (
+            f"MANIFEST.in re-includes dataset zips beyond {BUNDLED_DATASET_FILENAME}: "
+            f"{includes}"
+        )
+        assert lines.index("exclude mmcli/example_datasets/*.zip") < lines.index(includes[0]), (
+            "MANIFEST.in's exclude must precede the include, or the exclude sweeps the "
+            "one bundled dataset back out and the sdist ships no dataset at all"
+        )
+
+    def test_include_package_data_is_off_so_the_allowlist_is_binding(self):
+        """Setuptools defaults include-package-data to true for pyproject.toml projects.
+
+        With it on, package-data is additive rather than restrictive: every file in the
+        package directory is swept in and the allowlist above means nothing. Narrowing the
+        glob alone left the wheel at 108.2 MB — this flag is what made it 0.10 MB.
+        """
+        text = _strip_comment_lines(PYPROJECT_FILE.read_text())
+        assert re.search(r"^\s*include-package-data\s*=\s*false\s*$", text, re.MULTILINE), (
+            "include-package-data is not explicitly false in pyproject.toml. Setuptools "
+            "defaults it to true, which makes package-data additive and re-ships every "
+            "dataset zip in the package directory (REQ-SIZE-03)"
+        )
 
 
 class TestBinarySizeCeiling:
