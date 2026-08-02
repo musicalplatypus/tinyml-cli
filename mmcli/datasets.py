@@ -473,7 +473,27 @@ class _HostLockedRedirectHandler(urllib.request.HTTPRedirectHandler):
         self._dataset_name = dataset_name
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        new_host = urllib.parse.urlparse(newurl).hostname
+        parts = urllib.parse.urlparse(newurl)
+        original_scheme = urllib.parse.urlparse(req.full_url).scheme
+        # 10-REVIEW.md WR-05: the host lock alone permits a scheme downgrade
+        # (http/ftp) — urllib's build_opener() installs FTPHandler/FileHandler
+        # by default and HTTPRedirectHandler itself permits http/https/ftp
+        # targets. sha256 verification still catches substituted content, but
+        # a silent transport downgrade to plaintext (or ftp) should not be
+        # followed at all. ftp is never permitted regardless of the original
+        # scheme. An http *original* scheme only occurs via direct low-level
+        # test calls to _download_to_cache against the local http test
+        # server — fetch_dataset() enforces HTTPS-only on the initial URL for
+        # every real production call — so http->http is tolerated here (it
+        # is not a downgrade) while https->http/ftp is always refused.
+        if parts.scheme not in ("http", "https") or (
+            original_scheme == "https" and parts.scheme != "https"
+        ):
+            raise RuntimeError(
+                f"Refusing non-HTTPS redirect while fetching "
+                f"'{self._dataset_name}': {req.full_url} -> {newurl}"
+            )
+        new_host = parts.hostname
         if new_host == self._allowed_host:
             return super().redirect_request(req, fp, code, msg, headers, newurl)
         allowed_targets = ALLOWED_CROSS_HOST_REDIRECTS.get(

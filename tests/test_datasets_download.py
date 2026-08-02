@@ -657,6 +657,51 @@ class TestAllowedCrossHostRedirect:
                 "https://release-assets.githubusercontent.com/signed/path",
             )
 
+    def test_same_host_http_downgrade_refused(self):
+        # 10-REVIEW.md WR-05: the host lock alone does not check scheme, and
+        # HTTPRedirectHandler permits http/https/ftp targets by default. A
+        # same-host redirect to plain http:// must still be refused — a
+        # silent transport downgrade to plaintext, even without a host change.
+        handler = datasets._HostLockedRedirectHandler("github.com", "some_dataset")
+        req = datasets.urllib.request.Request(
+            "https://github.com/musicalplatypus/tinyml-cli/releases/"
+            "download/datasets-01_03_00/fan_blade_fault.zip"
+        )
+        with pytest.raises(RuntimeError, match="non-HTTPS redirect"):
+            handler.redirect_request(
+                req, None, 302, "Found", None,
+                "http://github.com/musicalplatypus/tinyml-cli/payload.zip",
+            )
+
+    def test_same_host_ftp_downgrade_refused(self):
+        # urllib.request.build_opener() installs FTPHandler by default, so an
+        # ftp:// redirect target is not merely unsupported — it would be
+        # followed if not explicitly refused here.
+        handler = datasets._HostLockedRedirectHandler("github.com", "some_dataset")
+        req = datasets.urllib.request.Request(
+            "https://github.com/musicalplatypus/tinyml-cli/releases/"
+            "download/datasets-01_03_00/fan_blade_fault.zip"
+        )
+        with pytest.raises(RuntimeError, match="non-HTTPS redirect"):
+            handler.redirect_request(
+                req, None, 302, "Found", None,
+                "ftp://github.com/musicalplatypus/tinyml-cli/payload.zip",
+            )
+
+    def test_allowlisted_target_host_over_http_still_refused(self):
+        # Even the one allowlisted cross-host pair must not bypass the
+        # scheme check — the scheme guard runs before the host allowlist.
+        handler = datasets._HostLockedRedirectHandler("github.com", "some_dataset")
+        req = datasets.urllib.request.Request(
+            "https://github.com/musicalplatypus/tinyml-cli/releases/"
+            "download/datasets-01_03_00/fan_blade_fault.zip"
+        )
+        with pytest.raises(RuntimeError, match="non-HTTPS redirect"):
+            handler.redirect_request(
+                req, None, 302, "Found", None,
+                "http://release-assets.githubusercontent.com/signed/path",
+            )
+
     def test_http_404_names_url(self, isolated_cache, http_server):
         base_url, _handler = http_server
         cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
