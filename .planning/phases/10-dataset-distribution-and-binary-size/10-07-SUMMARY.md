@@ -239,3 +239,15 @@ recorded there.
 ---
 *Phase: 10-dataset-distribution-and-binary-size*
 *Completed: 2026-08-02*
+
+## Self-Check: PASSED
+
+- `docs/RELEASING.md` — FOUND on disk
+- `scripts/release_preflight.py` — FOUND on disk, executable bit set
+- `.planning/phases/10-dataset-distribution-and-binary-size/10-07-SUMMARY.md` — FOUND on disk
+- Commit `d49e679` (Task 1) — resolves via `git cat-file -t`
+- Commit `f580a9f` (Task 2) — resolves via `git cat-file -t`
+- All claimed real-command output (Sphinx `-W` build, `python -m mmcli ... --help` invocations,
+  `python3 scripts/release_preflight.py` full run, `gh release view` failure-path check,
+  `pytest tests/test_datasets_cli.py`) was executed in this session, not inferred; commands and
+  results are reproduced verbatim in the task commit messages above and in `docs/RELEASING.md`.
