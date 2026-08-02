@@ -34,10 +34,14 @@ below, which works regardless of whether 10-03 has landed.
 
 import errno
 import os
+import pathlib
 import shutil
+import subprocess
 import sys
 
 import pytest
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 import mmcli.datasets as datasets_mod
 from mmcli.cli import main as cli_main
@@ -730,16 +734,38 @@ class TestCacheInspectionHasNoSideEffects:
             "cache_entry_size created the cache directory while reporting no entry"
         )
 
-    def test_datasets_list_json_does_not_create_the_cache_directory(self, tmp_path, monkeypatch):
-        """The user-visible consequence: a pure listing wrote to disk."""
-        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-        import importlib
-        import mmcli.datasets as ds
-        importlib.reload(ds)
-        for name in ds.DATASET_REGISTRY:
-            ds.cache_entry_size(name)
+    def test_datasets_list_json_does_not_create_the_cache_directory(self, tmp_path):
+        """The user-visible consequence: a pure listing wrote to disk.
+
+        Runs the REAL CLI in a subprocess rather than calling the helpers
+        directly. An earlier version of this test called cache_entry_size() in a
+        loop and passed while the shipped binary still created the directory —
+        because `datasets list` also goes through _resolve_dataset_zip(), which
+        had its own _cache_dir() call. Simulating the code path is not the same
+        as exercising it.
+        """
+        env = dict(os.environ, XDG_CACHE_HOME=str(tmp_path))
+        env.pop("MMCLI_DATASETS", None)
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "datasets", "list", "--format", "json"],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+        )
+        assert proc.returncode == 0, proc.stderr
         assert not (tmp_path / "mmcli").exists(), (
-            "listing every dataset created the cache directory"
+            "`mmcli datasets list` created the cache directory; a read-only "
+            "listing must not write to the filesystem"
+        )
+
+    def test_datasets_path_does_not_create_the_cache_directory(self, tmp_path):
+        """`datasets path` is also a pure query and must not write either."""
+        env = dict(os.environ, XDG_CACHE_HOME=str(tmp_path))
+        env.pop("MMCLI_DATASETS", None)
+        subprocess.run(
+            [sys.executable, "-m", "mmcli", "datasets", "path", "fan_blade_fault"],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+        )
+        assert not (tmp_path / "mmcli").exists(), (
+            "`mmcli datasets path` created the cache directory"
         )
 
     def test_cache_dir_still_creates_when_downloading(self, tmp_path, monkeypatch):
@@ -752,3 +778,26 @@ class TestCacheInspectionHasNoSideEffects:
         created = _cache_dir(DATASETS_DEFAULT_VERSION)
         assert created == pure
         assert os.path.isdir(created), "_cache_dir must still create for the download flow"
+
+    def test_resolution_reaching_the_cache_branch_creates_nothing(self, tmp_path, monkeypatch):
+        """Directly exercise step 3 of _resolve_dataset_zip.
+
+        The subprocess tests above cannot reach this branch: in a source tree all
+        ten zips sit in the package directory, so resolution returns at step 1.
+        Only an unbundled install (the shipped binary) falls through to the
+        cache — which is exactly where the shipped binary was still creating the
+        directory after the first fix. Simulate that by pointing the primary
+        directory at an empty one.
+        """
+        empty_primary = tmp_path / "primary"
+        empty_primary.mkdir()
+        cache_home = tmp_path / "cache"
+        monkeypatch.delenv("MMCLI_DATASETS", raising=False)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(cache_home))
+        monkeypatch.setattr(datasets_mod, "_datasets_dir", lambda: str(empty_primary))
+
+        assert datasets_mod._resolve_dataset_zip("fan_blade_fault") is None
+        assert not cache_home.exists(), (
+            "_resolve_dataset_zip created the cache directory while answering "
+            "a read-only resolution question"
+        )

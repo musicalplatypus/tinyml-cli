@@ -373,8 +373,13 @@ def _resolve_dataset_zip(name: str) -> str | None:
         return None
 
     # Step 3: version-scoped cache, digest-verified on every hit.
+    # `_cache_dir_path`, not `_cache_dir`: resolution is a read-only question and
+    # runs for every dataset on every `datasets list`. Creating the cache
+    # directory here made a pure listing write to disk, and made it fail on an
+    # unwritable cache home even when no download had been requested. Only the
+    # download flow creates.
     version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
-    cache_path = os.path.join(_cache_dir(version), filename)
+    cache_path = os.path.join(_cache_dir_path(version), filename)
     if os.path.isfile(cache_path):
         expected = meta.get("sha256")
         if expected and _sha256_of(cache_path) == expected:
