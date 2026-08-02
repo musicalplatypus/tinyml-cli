@@ -49,6 +49,41 @@ from mmcli.datasets import (
 # Local HTTP server fixture (Task 3) — never touches the real network
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# CI parity — see the matching note in tests/test_datasets_cli.py
+# ---------------------------------------------------------------------------
+# `.gitignore` ignores mmcli/example_datasets/*.zip; only
+# generic_audio_classification.zip is tracked, so a checkout has one of ten and
+# the two TestResolutionOrder cases below fail with FileNotFoundError. Synthesise
+# a valid stand-in for any missing zip and point that entry's recorded digest and
+# size at it — these tests assert resolution order and extraction, not contents.
+
+@pytest.fixture(autouse=True)
+def _dataset_zips_present(monkeypatch):
+    import hashlib as _h, os as _os, zipfile as _zf
+    bundled = _os.path.join(_os.path.dirname(datasets.__file__), "example_datasets")
+    made = []
+    for _name, _meta in DATASET_REGISTRY.items():
+        _src = _os.path.join(bundled, _meta["filename"])
+        if _os.path.exists(_src):
+            continue
+        _os.makedirs(bundled, exist_ok=True)
+        with _zf.ZipFile(_src, "w") as _z:
+            _z.writestr(f"{_name}/classes/a/sample.csv", "t,v\n0,1\n")
+            _z.writestr(f"{_name}/classes/b/sample.csv", "t,v\n0,2\n")
+        monkeypatch.setitem(DATASET_REGISTRY[_name], "sha256",
+                            _h.sha256(open(_src, "rb").read()).hexdigest())
+        monkeypatch.setitem(DATASET_REGISTRY[_name], "bytes", _os.path.getsize(_src))
+        made.append(_src)
+    yield
+    for _f in made:
+        try:
+            _os.unlink(_f)
+        except OSError:
+            pass
+
+
 class _RoutedHandler(http.server.BaseHTTPRequestHandler):
     """Serves whatever `routes[path]` says. Routes are set per-test on the
     class before starting the server, and cleared by the fixture teardown.
