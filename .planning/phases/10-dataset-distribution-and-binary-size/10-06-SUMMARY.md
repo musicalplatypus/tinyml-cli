@@ -86,6 +86,12 @@ Added `mmcli datasets list/pull/path` (a committed JSON interface for PlatypusSt
 
 ## The JSON contract (for 10-04 / DatasetCatalog.swift)
 
+**Updated 2026-08-02 by 10-09 (CONTEXT.md D-10):** an additive `cache_bytes`
+field was added below. This is an *addition* to the contract as originally
+committed by this plan — every field and behaviour documented below from
+`name` through `description` is unchanged and still authoritative; existing
+consumers that read only those fields are unaffected.
+
 ```
 mmcli datasets list --format json
 ```
@@ -98,6 +104,7 @@ emits:
       "version": "01_03_00",
       "state": "bundled",
       "bytes": 56595859,
+      "cache_bytes": null,
       "task_types": ["motor_fault"],
       "module": "timeseries",
       "description": "Fan blade fault classification (vibration data, 3-axis)"
@@ -125,13 +132,29 @@ emits:
     that directory.
 - `bytes`: from the registry (`meta.bytes`), never a HEAD request — listing
   all 10 costs zero network round-trips.
+- `cache_bytes` **(added 10-09, CONTEXT.md D-10)**: the actual on-disk size
+  in bytes of this dataset's version-scoped cache entry (from `os.stat`, not
+  the registry's recorded `bytes`), or `null` if no cache entry exists.
+  Deliberately independent of `state`: a dataset can report `state: bundled`
+  (the packaged copy, or a file in the user's own `MMCLI_DATASETS`
+  directory, wins resolution) while `cache_bytes` is still non-null, because
+  a stale entry from an earlier download can sit in the cache underneath the
+  winning copy. Without this field that disk usage is invisible and
+  unreclaimable from a GUI — see `mmcli datasets remove` (10-09-PLAN.md),
+  which is the only supported way to reclaim it. Computed via
+  `cache_entry_path()`, a helper deliberately separate from
+  `_resolve_dataset_zip()` (the resolution answer): it always names where
+  the cache entry *would* be, never where the dataset currently resolves
+  from.
 - `task_types`, `module`, `description`: descriptive fields carried through
   unchanged from `DATASET_REGISTRY`.
 
 All 10 registry entries are always present in the array regardless of
 filters (filters only apply to `-t`/`-m`, tested separately). 10-04's Swift
 model should treat this key set and state vocabulary as fixed; changing
-either requires a coordinated update to `DatasetCatalog.swift`.
+either requires a coordinated update to `DatasetCatalog.swift`. (10-09 is
+the one coordinated update on record: it added `cache_bytes` to both sides
+in the same plan.)
 
 ## Task Commits
 
