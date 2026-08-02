@@ -115,3 +115,31 @@ convention, which exists because inline planning has previously missed blockers 
 checker caught. Item 1 in particular changed a requirement and a release gate from
 conversation. Worth watching for on the remaining plans: 10-04's checkpoint is still
 open, and 10-07/10-08/10-09 have not started.
+
+---
+
+## 5. CI workflow ref fix (`56f6cc0`, 2026-07-23)
+
+**Commit:** `56f6cc0` — one line in `.github/workflows/test-cli.yml`.
+**Requirement:** none.
+
+Corrected a `tinyml-tensorlab` ref pointing at `platypus_dev_1.4`, a branch that does not exist.
+Unrelated to phase 10's subject matter; it landed during the phase window because CI was being
+exercised. Recorded here only so that a commit-by-commit audit of the phase finds an
+explanation for every code change rather than an unattributed one.
+
+---
+
+## Audit note (2026-08-02)
+
+A traceability audit run at the user's request checked every commit in both repositories since
+the phase began against `.planning/`. It found two gaps, both now closed:
+
+- **A fabricated SHA.** `10-09-SUMMARY.md` cited `d9e4a1f` for the completed cache side-effect
+  fix. That object does not exist; the real commit is `2f639eb`. The summary is corrected. This
+  is the failure mode the project already has a standing note about — an unverified "fact" in a
+  committed document is permanent, and this one was written without checking.
+- **This CI commit**, previously unattributed.
+
+Everything else reconciles: all nine PlatypusStudio commits and all phase-10 tinyml-cli code
+commits are referenced from a SUMMARY, from this file, or from `10-REVIEWS.md`.

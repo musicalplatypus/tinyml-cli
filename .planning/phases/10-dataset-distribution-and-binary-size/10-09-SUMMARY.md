@@ -20,7 +20,7 @@ requirements-completed: [REQ-UX-02]
 
 # 10-09: Standalone dataset library + `mmcli datasets remove`
 
-**Spans two repositories.** tinyml-cli: `47c76f3`, `420adde`, `0bc9703`, `d9e4a1f`.
+**Spans two repositories.** tinyml-cli: `47c76f3`, `420adde`, `0bc9703`, `2f639eb`.
 PlatypusStudio: `6d66d7f`, `560aa63`, `e5142bf`.
 
 ## What shipped
