@@ -844,7 +844,29 @@ def extract_dataset(dataset_name: str, project_path: str,
     os.makedirs(dataset_dir, exist_ok=True)
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(dataset_dir)
+            # Explicit containment guard: extract member-by-member (rather than
+            # a single extractall()) and confirm each resulting real path stays
+            # under dataset_dir, instead of relying solely on zipfile's own
+            # member-path sanitisation (correct in current CPython but
+            # undocumented as a stability guarantee — 10-REVIEW.md CR-02). This
+            # checks zf.extract()'s own return value (the path it actually wrote
+            # to) rather than re-deriving the target with a different path
+            # resolution, which would disagree with zipfile's arcname filtering
+            # and false-positive on members zipfile already neutralises safely
+            # (e.g. leading '../' segments are stripped, not resolved).
+            root = os.path.realpath(dataset_dir)
+            for member in zf.namelist():
+                extracted_path = zf.extract(member, dataset_dir)
+                real_extracted = os.path.realpath(extracted_path)
+                if not (real_extracted == root or real_extracted.startswith(root + os.sep)):
+                    if os.path.isfile(real_extracted):
+                        os.remove(real_extracted)
+                    print(
+                        f"ERROR: refusing to extract '{member}' from "
+                        f"'{zip_path}': it escaped to {real_extracted}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
     except zipfile.BadZipFile:
         print(
             f"ERROR: '{zip_path}' is not a valid zip file.",

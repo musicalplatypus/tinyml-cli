@@ -27,6 +27,7 @@ import http.server
 import os
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -438,18 +439,33 @@ class TestZipSlipProtection:
         env_dir.mkdir()
         (env_dir / "evil.zip").write_bytes(evil_zip.read_bytes())
 
-        marker = tmp_path / "tmp" / "evil_zip_slip_marker.txt"
+        # The malicious member is "../../../../tmp/evil_zip_slip_marker.txt". A
+        # successful escape resolves relative to <project_path>/dataset/ (where
+        # extract_dataset() actually extracts), NOT relative to tmp_path itself —
+        # asserting on the wrong path made this test pass unconditionally, even
+        # against an extract_dataset() with zero protection (10-REVIEW.md CR-02).
+        project_path_obj = tmp_path / "proj"
+        escape_root = (project_path_obj / "dataset" / "../../../../tmp").resolve()
+        marker = escape_root / "evil_zip_slip_marker.txt"
         try:
             import os as _os
             _os.environ["MMCLI_DATASETS"] = str(env_dir)
-            project_path = str(tmp_path / "proj")
+            project_path = str(project_path_obj)
             extract_dataset(
                 "_test_only_zip_slip", project_path,
                 task_type="generic_timeseries_classification",
             )
             assert not marker.exists(), (
-                "zip-slip member escaped the project directory"
+                f"zip-slip member escaped to {marker}"
             )
+            # Positive containment: every extracted file must stay under the
+            # project directory — non-vacuous even if the marker path above is
+            # ever wrong again.
+            resolved_project = Path(project_path).resolve()
+            extracted = [p.resolve() for p in resolved_project.rglob("*") if p.is_file()]
+            assert extracted, "nothing was extracted — the test proved nothing"
+            for p in extracted:
+                assert p.is_relative_to(resolved_project), f"{p} escaped {resolved_project}"
             # The benign member must still have landed correctly.
             assert os.path.isfile(
                 os.path.join(project_path, "dataset", "classes", "class_a", "ok.csv")
