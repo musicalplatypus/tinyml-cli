@@ -3,7 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
 status: ready_to_plan
-last_updated: "2026-07-31T16:09:04.581Z"
+stopped_at: session resumed, awaiting action selection.
+last_updated: "2026-08-02T21:34:50.575Z"
 progress:
   total_phases: 6
   completed_phases: 5
