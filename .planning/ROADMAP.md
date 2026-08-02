@@ -125,6 +125,71 @@ Plans:
 - [ ] 10-07-PLAN.md — wave 5 — docs/RELEASING.md, CLI help, Sphinx (REQ-DOC-01, REQ-DATA-05)
 - [x] 10-10-PLAN.md — wave 5 — Stop the wheel and sdist shipping the nine mirrored datasets: narrow `[tool.setuptools.package-data]` to the one locally-authored zip (the pip-channel sibling of 10-03's `BUNDLED_DATASETS` allowlist), guard it in tests/test_build_config.py, and verify against a real wheel + sdist and a clean-venv install that pulls from the live mirror (REQ-SIZE-03). A wheel built from the current glob measures 108.2 MB.
 
+### Phase 11: PlatypusStudio run archive and training/NAS view verification
+
+**Goal:** Make a finished training run reviewable in the app. Today a run archives its metadata
+and nothing else, so every downstream view has nothing to show and says so by showing nothing —
+blank chart headings for a completed run, no reason for a failed one, and no route at all to the
+NAS views. Fix what is recorded first, then make the views honest about what they do and do not
+have, then close the gap that let all of this ship: **the SwiftUI target has no test coverage
+and cannot get any, because `Package.swift` declares one test target depending only on
+`MMCLIKit`.**
+
+**Source:** exploratory pass 2026-08-02 over `ecg_classification`'s three archived runs
+(one completed NAS run, two failed). Findings D-A…D-G, with evidence and file/line references,
+are in
+`.planning/phases/10-dataset-distribution-and-binary-size/deferred-items.md`
+§"Found during an exploratory pass over the training-report and NAS pages". **Read that section
+before planning — it is the requirements source for this phase.**
+
+**Requirements**:
+- REQ-RUN-01: a completed run archives what is needed to review it later — its metrics, its
+  artifact paths, its log, and, for a searched run, the fact that it was one. Today
+  `run.json` records `"metrics": {}`, `"artifacts": {}`, no `nas` key and no `run.log`
+  alongside it, despite `"status": "completed"` (D-A). This is the root cause of REQ-RUN-02..04
+  and must be fixed first — an archive that records nothing cannot be displayed.
+- REQ-RUN-02: a run view never presents absence as if it were data. A run with no recorded
+  metrics says so; it does not render "Loss" and "Accuracy %" as bare headings over blank
+  space, which is indistinguishable from a chart that failed to draw (D-B). `MetricCharts`
+  has no empty-state path today.
+- REQ-RUN-03: a failed run explains itself — status, and enough of the failure (exit status,
+  log excerpt, or a pointer to where it is recorded) to act on. Today it renders identically
+  to a completed one (D-C).
+- REQ-RUN-04: a historical NAS run reaches the NAS surfaces. Routing keys off
+  `record.nas != nil`, which the archive never sets, so `NASSearchView` and `ArchitectureView`
+  are unreachable for any archived run and the "Searched" badge never appears (D-D). Both views
+  remain unverified end-to-end; reaching them live requires launching a real search.
+- REQ-RUN-05: the runs table shows a date, not an identifier. `RunsPanel.swift:28` prints
+  `r.id.prefix(13)` (`20260711-1956`) while the manifest carries an ISO `startedAt` (D-E).
+- REQ-RUN-06: comparison is reachable. `RunsPanel` is written for multi-select
+  (`Set<RunManifest.ID>`, `Table(selection:)`) but neither cmd- nor shift-click extended the
+  selection during the pass, leaving Compare permanently disabled and `CompareView` dead (D-F).
+  **Cause unconfirmed** — the `.simultaneousGesture(TapGesture(count: 2))` at `:26` is a
+  candidate, but so is the click automation used. Reproduce by hand before changing code.
+- REQ-TEST-01: the SwiftUI target is testable, or the decision not to test it is deliberate and
+  written down. One test target exists (`MMCLIKitTests` → `MMCLIKit`); no test imports SwiftUI.
+  The 10-04 checkpoint found a defect — a cancelled download rendering mmcli's traceback as a
+  failure — that all 138 unit tests passed, which is the argument for this being a real gap
+  rather than a stylistic one.
+
+**Also in scope** (recorded in `10-CONTEXT.md`, same subsystem, cheap to fold in):
+- `ProjectScanner.scan` silently drops directories it cannot read, so a permissions problem is
+  indistinguishable from "no projects" — the invisible-state trap the 10-04 Setup row exists to
+  fix.
+- Ad-hoc signing makes macOS treat every rebuild as a new application, resetting privacy
+  grants. This is what makes repeatable UI verification painful, so it is worth settling here
+  even though a stable signing identity is the larger question.
+
+**Out of scope:** the Train launch form and NAS mode switch, which were driven during the pass
+and behave correctly (mode swap, Model row removal, Size/Optimize/Search-epochs, pickers
+populating from `mmcli info`), and dataset distribution, which is phase 10.
+
+**Depends on:** Phase 10
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 11 to break down)
+
 ---
 
 ## v1.0 Milestone — Core Functionality & Security (complete)

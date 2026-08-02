@@ -522,3 +522,12 @@ gates — COMPLETE, plus two context-driven additions.**
 4. Fix _is_safe_path traversal detection for edge cases (2 tests — general)
 5. Investigate MPS float64 crash from tinyml_tinyverse update (7 E2E errors — general, upstream regression)
 6. Update test_no_pca_images for new modelmaker PCA behavior (1 test — testing)
+
+### Roadmap Evolution
+
+- Phase 11 added 2026-08-02: PlatypusStudio run archive and training/NAS view verification.
+  Source is an exploratory pass over the training-report and NAS pages, which had never been
+  tested and structurally could not be — the package declares one test target depending only on
+  MMCLIKit, so every SwiftUI view has zero coverage. Seven findings (D-A…D-G) recorded in
+  phase 10's deferred-items.md; the root cause is that a completed run archives metadata only,
+  leaving every downstream view with nothing to show.
