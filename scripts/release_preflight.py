@@ -14,10 +14,12 @@ Two checks, run in the order a release actually depends on:
   1. **Mirror reachability + tag correctness** — `gh release view <tag>
      --json tagName,assets` against this project's own GitHub release. Cheap
      (no payload downloaded); the same check release.yml's
-     `mirror-healthcheck` CI job runs, reused here rather than
-     reimplemented, so a maintainer running this locally sees the identical
-     failure CI would report. Requires the `gh` CLI on PATH and
-     authenticated (`gh auth status`).
+     `mirror-healthcheck` CI job runs. This is a duplicated implementation
+     (not a shared import) kept in lockstep by tests/test_ci_workflows.py's
+     drift-guard tests, which fail if the `gh` argv or FATAL message wording
+     between the two ever diverges — so a maintainer running this locally
+     should still see the identical failure CI would report. Requires the
+     `gh` CLI on PATH and authenticated (`gh auth status`).
   2. **Digest verification** — invokes `scripts/verify_dataset_digests.py`
      as a subprocess (not reimplemented inline), which performs the real
      GET-and-hash gate over all nine fetchable datasets via

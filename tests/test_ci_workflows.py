@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TEST_CLI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test-cli.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 WORKFLOWS = [TEST_CLI_WORKFLOW, RELEASE_WORKFLOW]
+RELEASE_PREFLIGHT_SCRIPT = REPO_ROOT / "scripts" / "release_preflight.py"
 
 # Every file in this set must be collected by BOTH workflows' pytest invocation. Removing one
 # is a decision about what CI enforces before a release, not a cleanup — if a test file is
@@ -135,3 +136,81 @@ def test_deselection_is_still_intact_in_both_workflows():
             f"{path.name} no longer carries the exact "
             f'`-k "not TestInitDatasetExtractReal"` deselection'
         )
+
+
+# ---------------------------------------------------------------------------
+# 10-REVIEW.md WR-02: scripts/release_preflight.py's mirror check and
+# release.yml's `mirror-healthcheck` job's embedded python are a verbatim
+# copy of each other, not a shared/reused implementation. Nothing previously
+# guarded the two copies against drift. These two tests are that guard: they
+# extract the `gh release view` argv list and the FATAL: message templates
+# from both files and assert they match exactly. A one-sided edit to either
+# copy (e.g. renaming a flag, tweaking a message) fails here instead of
+# surfacing later as "preflight and CI disagree" during an actual release.
+# ---------------------------------------------------------------------------
+
+# Matches a run of one or more adjacent (implicitly-concatenated) f-string /
+# plain-string literals, the first of which starts with "FATAL:". This
+# captures each multi-line FATAL message template as one unit regardless of
+# how many `f"..."` segments it's split across.
+_FATAL_GROUP_RE = re.compile(
+    r'(f"FATAL:(?:[^"\\]|\\.)*"(?:\s*f?"(?:[^"\\]|\\.)*")*)'
+)
+
+# The `gh release view <tag> --repo <REPO> --json tagName,assets` argv list,
+# tolerant of the different line-wrapping the two files use and an optional
+# trailing comma before the closing bracket.
+_GH_ARGV_RE = re.compile(
+    r'\[\s*"gh",\s*"release",\s*"view",\s*tag,\s*"--repo",\s*REPO,\s*"--json",'
+    r'\s*"tagName,assets",?\s*\]'
+)
+
+
+def _normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def test_release_preflight_script_exists():
+    assert RELEASE_PREFLIGHT_SCRIPT.exists(), (
+        f"expected release preflight script not found: {RELEASE_PREFLIGHT_SCRIPT}"
+    )
+
+
+def test_mirror_check_gh_argv_matches_between_script_and_workflow():
+    script_text = _normalize_whitespace(_read(RELEASE_PREFLIGHT_SCRIPT))
+    workflow_text = _normalize_whitespace(_read(RELEASE_WORKFLOW))
+    assert _GH_ARGV_RE.search(script_text), (
+        f"{RELEASE_PREFLIGHT_SCRIPT.name} no longer contains the expected "
+        f"`gh release view ... --json tagName,assets` argv — if this changed "
+        f"deliberately, release.yml's mirror-healthcheck job must change "
+        f"identically in the same commit"
+    )
+    assert _GH_ARGV_RE.search(workflow_text), (
+        f"{RELEASE_WORKFLOW.name}'s mirror-healthcheck job no longer contains "
+        f"the expected `gh release view ... --json tagName,assets` argv — it "
+        f"has drifted from {RELEASE_PREFLIGHT_SCRIPT.name}"
+    )
+
+
+def test_mirror_check_fatal_messages_match_between_script_and_workflow():
+    script_msgs = sorted(
+        _normalize_whitespace(m)
+        for m in _FATAL_GROUP_RE.findall(_read(RELEASE_PREFLIGHT_SCRIPT))
+    )
+    workflow_msgs = sorted(
+        _normalize_whitespace(m)
+        for m in _FATAL_GROUP_RE.findall(_read(RELEASE_WORKFLOW))
+    )
+    assert script_msgs, (
+        f"found no FATAL: message templates in {RELEASE_PREFLIGHT_SCRIPT.name} — "
+        f"the extraction regex itself may have drifted from the source"
+    )
+    assert script_msgs == workflow_msgs, (
+        f"FATAL: message templates differ between {RELEASE_PREFLIGHT_SCRIPT.name} "
+        f"and {RELEASE_WORKFLOW.name}'s mirror-healthcheck job — these are meant "
+        f"to be the identical check, reused rather than reimplemented; a "
+        f"maintainer running the preflight locally must see exactly the failure "
+        f"CI would report.\n"
+        f"Only in script: {sorted(set(script_msgs) - set(workflow_msgs))}\n"
+        f"Only in workflow: {sorted(set(workflow_msgs) - set(script_msgs))}"
+    )

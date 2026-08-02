@@ -108,9 +108,11 @@ build. It performs, in order:
    against `musicalplatypus/tinyml-cli`, verifying the release exists, is tagged exactly as
    `DATASETS_DEFAULT_VERSION` expects, and every fetchable dataset's asset is present at a
    non-zero size. No payload is downloaded; this is the same check `release.yml`'s
-   `mirror-healthcheck` CI job runs, reused rather than reimplemented, so a local preflight
-   failure looks like the CI failure a maintainer would otherwise have to wait for. Requires the
-   `gh` CLI on `PATH` and authenticated (`gh auth status`).
+   `mirror-healthcheck` CI job runs. The two are a duplicated implementation (not a shared
+   import) kept in lockstep by `tests/test_ci_workflows.py`'s drift-guard tests, which fail
+   if the `gh` argv or FATAL message wording diverges between them — so a local preflight
+   failure should still look like the CI failure a maintainer would otherwise have to wait
+   for. Requires the `gh` CLI on `PATH` and authenticated (`gh auth status`).
 2. **Full digest verification** — invokes `scripts/verify_dataset_digests.py` as a subprocess
    (§3), the real ~131 MB GET-and-hash gate.
 
