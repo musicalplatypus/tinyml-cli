@@ -29,14 +29,18 @@ BUILD_SCRIPTS = [
     REPO_ROOT / "build_windows.ps1",
 ]
 
-# 152043520 = 145 MiB, the interim ceiling while the dataset payload is still bundled.
-# 15728640  = 15 MiB, REQ-SIZE-01's original target. Retired 2026-07-31: unreachable, and a
-#             ceiling no build can meet is a gate that has to be ignored to ship.
-# 27262976  = 26 MiB (REQ-SIZE-01 as revised), against a measured 25,256,048-byte build once
-#             PIL and cryptography — neither referenced anywhere in mmcli — are excluded.
-#             ~2 MiB of headroom. The remainder is numpy and pandas, which `analyze` imports
-#             lazily for CSV/npy/pkl input, so cutting further means dropping that support.
-SANCTIONED_CEILINGS = (152043520, 15728640, 27262976)
+# History (comment only — NOT sanctioned values, retired ceilings must never be
+# restored to the assertion below):
+#   152043520 (145 MiB) retired: interim ceiling while the dataset payload was still bundled.
+#    15728640 ( 15 MiB) retired 2026-07-31: REQ-SIZE-01's original target, unreachable — a
+#              ceiling no build can meet is a gate that has to be ignored to ship.
+#
+# 27262976 = 26 MiB (REQ-SIZE-01 as revised), against a measured 25,256,048-byte build once
+#            PIL and cryptography — neither referenced anywhere in mmcli — are excluded.
+#            ~2 MiB of headroom. The remainder is numpy and pandas, which `analyze` imports
+#            lazily for CSV/npy/pkl input, so cutting further means dropping that support.
+CEILING = 27262976  # the single sanctioned value; raising it is a deliberate decision
+                     # (docs/RELEASING.md §8) that must edit this constant in the same commit
 
 NEVER_EXCLUDE = ("numpy", "pandas")
 
@@ -486,9 +490,10 @@ class TestBinarySizeCeiling:
         value = int(raw)
         assert value > 0
 
-    def test_ceiling_is_a_sanctioned_value(self):
+    def test_ceiling_is_the_sanctioned_value(self):
         value = int(CEILING_FILE.read_text().strip())
-        assert value in SANCTIONED_CEILINGS, (
-            f"{value} is not one of the sanctioned ceilings {SANCTIONED_CEILINGS} — "
-            f"a typo here would loosen the size gate by an order of magnitude"
+        assert value == CEILING, (
+            f"{value} != the sanctioned ceiling {CEILING}. Raising this is a "
+            f"deliberate decision (docs/RELEASING.md §8) that must edit this "
+            f"constant in the same commit — not a value a typo can reach."
         )
