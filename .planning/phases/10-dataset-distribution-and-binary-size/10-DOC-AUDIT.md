@@ -49,6 +49,16 @@ Unrelated to phase 10 — a submodule/checkout problem — but it means:
 
 Status corrected below.
 
+**Update, same day (`2c3fe31`).** Root-caused and fixed. `test-cli.yml` referenced
+`platypus_dev`, a branch that exists but whose `tinyml-modelzoo` contains only `README.md` and
+`graphs` — no Python package. `release.yml` referenced `platypus_dev_1.4`, which does not exist
+on the remote at all, so its checkout could never succeed. Commit `56f6cc0` had moved the first
+file from the missing branch to the gutted one and left the second alone, which is why the
+symptom persisted through an apparent fix. Both now use `integration`, verified by cloning it as
+`actions/checkout` does and running the command that failed. **The requirement stays half
+discharged**: the fix is unpushed (H-1), so no workflow has yet run, and a green CI is still
+unobserved.
+
 ## M-1 — a MUST-READ reference in CONTEXT.md points at a path that does not resolve
 
 `10-CONTEXT.md`'s `<canonical_refs>` opens with "Downstream agents MUST read these before
