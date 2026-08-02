@@ -698,3 +698,57 @@ class TestInitAutoFetchPolicy:
         )
         assert code == 2
         assert not project.exists()
+
+
+class TestCacheInspectionHasNoSideEffects:
+    """Asking where a cache entry would be must not create anything.
+
+    Found by CodeRabbit review of 10-09 Task 1: `cache_entry_path` went through
+    `_cache_dir`, which calls `os.makedirs`. Every `datasets list` therefore
+    created `<cache-home>/mmcli/datasets/<version>/` as a side effect of being
+    asked a read-only question, and would raise on an unwritable cache home
+    even when no download had been requested.
+    """
+
+    def test_cache_entry_path_does_not_create_the_cache_directory(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        from mmcli.datasets import cache_entry_path
+
+        path = cache_entry_path("arc_fault_classification")
+        assert str(tmp_path) in path
+        assert not (tmp_path / "mmcli").exists(), (
+            "cache_entry_path created the cache directory; a path query must "
+            "not touch the filesystem"
+        )
+
+    def test_cache_entry_size_does_not_create_the_cache_directory(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        from mmcli.datasets import cache_entry_size
+
+        assert cache_entry_size("arc_fault_classification") is None
+        assert not (tmp_path / "mmcli").exists(), (
+            "cache_entry_size created the cache directory while reporting no entry"
+        )
+
+    def test_datasets_list_json_does_not_create_the_cache_directory(self, tmp_path, monkeypatch):
+        """The user-visible consequence: a pure listing wrote to disk."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        import importlib
+        import mmcli.datasets as ds
+        importlib.reload(ds)
+        for name in ds.DATASET_REGISTRY:
+            ds.cache_entry_size(name)
+        assert not (tmp_path / "mmcli").exists(), (
+            "listing every dataset created the cache directory"
+        )
+
+    def test_cache_dir_still_creates_when_downloading(self, tmp_path, monkeypatch):
+        """The download flow legitimately needs the directory to exist."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        from mmcli.datasets import _cache_dir, _cache_dir_path, DATASETS_DEFAULT_VERSION
+
+        pure = _cache_dir_path(DATASETS_DEFAULT_VERSION)
+        assert not os.path.exists(pure)
+        created = _cache_dir(DATASETS_DEFAULT_VERSION)
+        assert created == pure
+        assert os.path.isdir(created), "_cache_dir must still create for the download flow"

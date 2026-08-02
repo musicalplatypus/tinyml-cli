@@ -101,9 +101,29 @@ def _datasets_dir() -> str:
     return os.path.join(os.path.dirname(__file__), "example_datasets")
 
 
+def _cache_dir_path(version: str) -> str:
+    """Return the version-scoped cache directory path **without touching the
+    filesystem**.
+
+    Split out from `_cache_dir` so that answering "where would this live"
+    stays a pure computation. Inspection paths — `cache_entry_path`,
+    `cache_entry_size`, and therefore every `datasets list` — must not create
+    a directory as a side effect of being asked a question, and must not fail
+    on a read-only or unwritable cache home when no download was requested.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+    return os.path.join(base, "mmcli", "datasets", version)
+
+
 def _cache_dir(version: str) -> str:
     """Return the version-scoped cache directory for downloaded datasets,
     creating it (mode 0700) if it does not already exist.
+
+    Use `_cache_dir_path` instead when only the path is needed: this function
+    is for the download flow, which is the one caller that legitimately needs
+    the directory to exist.
 
     Honours XDG_CACHE_HOME, falling back to ~/.cache. Resolves to
     ``<cache-home>/mmcli/datasets/<version>/``.
@@ -115,10 +135,7 @@ def _cache_dir(version: str) -> str:
     10-03-PLAN.md) exists to prevent. Two versions therefore always cache
     independently.
     """
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-        os.path.expanduser("~"), ".cache"
-    )
-    path = os.path.join(base, "mmcli", "datasets", version)
+    path = _cache_dir_path(version)
     os.makedirs(path, exist_ok=True)
     try:
         # os.makedirs's mode= argument is masked by umask, so set the
@@ -389,7 +406,10 @@ def cache_entry_path(name: str) -> str:
     """
     meta = DATASET_REGISTRY[name]  # KeyError on unknown name, deliberately
     version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
-    return os.path.join(_cache_dir(version), meta["filename"])
+    # `_cache_dir_path`, not `_cache_dir`: asking where a cache entry would be
+    # must not create the directory. `datasets list` calls this for every
+    # dataset, and a pure listing has no business writing to the filesystem.
+    return os.path.join(_cache_dir_path(version), meta["filename"])
 
 
 def cache_entry_size(name: str) -> int | None:
@@ -550,6 +570,12 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
                 if show_progress else None
             )
             try:
+                # The `with` is inside its own try/except OSError as well as the
+                # per-write guard below: writes are buffered, so the final flush
+                # happens when the block exits, and an ENOSPC there escapes the
+                # inner handler entirely. Without this, a disk that fills on the
+                # last partial buffer produces a bare traceback — the exact
+                # failure the inner handler was added to prevent.
                 with open(tmp_path, "wb") as out:
                     while True:
                         chunk = response.read(65536)
@@ -581,6 +607,20 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
                         hasher.update(chunk)
                         if bar is not None:
                             bar.update(len(chunk))
+            except OSError as exc:
+                # Only reachable for an OSError raised outside the per-write
+                # guard — in practice the buffered flush on close. Same
+                # translation, so the user sees one message whichever byte the
+                # disk ran out on.
+                if exc.errno == errno.ENOSPC:
+                    raise RuntimeError(
+                        f"Not enough free disk space to write '{name}' to "
+                        f"{cache_dir}: the disk is full. Free up space and "
+                        f"retry 'mmcli datasets pull {name}'."
+                    ) from exc
+                raise RuntimeError(
+                    f"Failed writing '{name}' to {cache_dir}: {exc}"
+                ) from exc
             finally:
                 if bar is not None:
                     bar.close()

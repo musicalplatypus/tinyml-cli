@@ -1621,7 +1621,7 @@ def _handle_datasets_remove(args: argparse.Namespace) -> None:
     This intentionally does NOT reuse `_resolve_dataset_zip` (which can
     return a path inside the packaged datasets directory or an
     MMCLI_DATASETS directory) — the target is always computed from
-    `cache_entry_path`, and re-asserted to sit inside `_cache_dir(version)`
+    `cache_entry_path`, and re-asserted to sit inside `_cache_dir_path(version)`
     immediately before unlinking, so a future refactor of the path
     computation cannot silently widen what this command is allowed to
     delete (10-09-PLAN.md T-10-09-01).
@@ -1629,7 +1629,7 @@ def _handle_datasets_remove(args: argparse.Namespace) -> None:
     from mmcli.datasets import (
         DATASET_REGISTRY,
         DATASETS_DEFAULT_VERSION,
-        _cache_dir,
+        _cache_dir_path,
         cache_entry_path,
     )
 
@@ -1665,7 +1665,11 @@ def _handle_datasets_remove(args: argparse.Namespace) -> None:
     # the path was computed; this is the assertion that survives a future
     # refactor of cache_entry_path itself. Never recurse, never remove a
     # directory, never sweep another version's copy.
-    expected_dir = os.path.normpath(_cache_dir(version))
+    # `_cache_dir_path`, not `_cache_dir`: this is a safety assertion, and an
+    # assertion that creates a directory in order to check one is a side
+    # effect on the refusal path — `remove` would create the very cache dir it
+    # is about to decline to touch.
+    expected_dir = os.path.normpath(_cache_dir_path(version))
     actual_dir = os.path.normpath(os.path.dirname(target))
     if actual_dir != expected_dir:
         print(
@@ -1680,8 +1684,12 @@ def _handle_datasets_remove(args: argparse.Namespace) -> None:
         print(f"'{name}' is not cached; nothing to remove.")
         sys.exit(0)
 
-    freed_bytes = os.path.getsize(target)
+    # getsize inside the try with unlink: the file can disappear between the
+    # isfile check above and here (another process, or a second `remove`), and
+    # a bare OSError there would surface as a traceback rather than the
+    # message below.
     try:
+        freed_bytes = os.path.getsize(target)
         os.unlink(target)
     except OSError as exc:
         print(f"ERROR: Failed to remove {target!r}: {exc}", file=sys.stderr)
