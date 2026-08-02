@@ -531,3 +531,16 @@ gates — COMPLETE, plus two context-driven additions.**
   MMCLIKit, so every SwiftUI view has zero coverage. Seven findings (D-A…D-G) recorded in
   phase 10's deferred-items.md; the root cause is that a completed run archives metadata only,
   leaving every downstream view with nothing to show.
+
+### 10-09 in flight (2026-08-02)
+
+Tasks 1-3 committed across two repos (tinyml-cli `47c76f3`, `420adde`; PlatypusStudio
+`6d66d7f`, `560aa63`, `e5142bf`); Task 4 is a blocking human-verification checkpoint and has
+not been attempted, so ROADMAP correctly still shows 10-09 unchecked. Full handoff — including
+the nine checks, the three deviations the SUMMARY must declare, and the CONTEXT D-10..D-13
+scope folded in — is in
+`.planning/phases/10-dataset-distribution-and-binary-size/.continue-here.md`.
+
+Also added `.planning/REQUIREMENTS.md` (was missing entirely) as a traceability index over
+ROADMAP's requirements — which plan claims each ID and whether it is discharged. Audit found
+full coverage for phase 10: every one of its 11 requirement IDs is claimed by at least one plan.
