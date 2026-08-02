@@ -192,18 +192,41 @@ def test_mirror_check_gh_argv_matches_between_script_and_workflow():
     )
 
 
+def _check_mirror_tag_and_assets_body(script_text: str) -> str:
+    """Isolate just the part of check_mirror_tag_and_assets() that
+    corresponds 1:1 with release.yml's embedded heredoc — from the `gh`
+    subprocess call onward. Script-only concerns added since (e.g. WR-03's
+    import-error / missing-`gh`-executable FATAL: messages) have no
+    workflow analog: release.yml's job always has mmcli freshly pip-installed
+    and `gh` preinstalled on the runner in the same job, so it never needs
+    those guards. Including them here would make this drift guard
+    false-positive on every legitimate script-only robustness fix."""
+    match = re.search(
+        r"result = subprocess\.run\(.*?return True", script_text, re.DOTALL
+    )
+    assert match, (
+        "could not locate the `gh` subprocess call in "
+        f"check_mirror_tag_and_assets() of {RELEASE_PREFLIGHT_SCRIPT.name} — "
+        f"has it been renamed or restructured?"
+    )
+    return match.group(0)
+
+
 def test_mirror_check_fatal_messages_match_between_script_and_workflow():
     script_msgs = sorted(
         _normalize_whitespace(m)
-        for m in _FATAL_GROUP_RE.findall(_read(RELEASE_PREFLIGHT_SCRIPT))
+        for m in _FATAL_GROUP_RE.findall(
+            _check_mirror_tag_and_assets_body(_read(RELEASE_PREFLIGHT_SCRIPT))
+        )
     )
     workflow_msgs = sorted(
         _normalize_whitespace(m)
         for m in _FATAL_GROUP_RE.findall(_read(RELEASE_WORKFLOW))
     )
     assert script_msgs, (
-        f"found no FATAL: message templates in {RELEASE_PREFLIGHT_SCRIPT.name} — "
-        f"the extraction regex itself may have drifted from the source"
+        f"found no FATAL: message templates in check_mirror_tag_and_assets() "
+        f"of {RELEASE_PREFLIGHT_SCRIPT.name} — the extraction regex itself "
+        f"may have drifted from the source"
     )
     assert script_msgs == workflow_msgs, (
         f"FATAL: message templates differ between {RELEASE_PREFLIGHT_SCRIPT.name} "

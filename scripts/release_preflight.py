@@ -43,8 +43,10 @@ import argparse
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 REPO = "musicalplatypus/tinyml-cli"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def check_mirror_tag_and_assets() -> bool:
@@ -53,11 +55,20 @@ def check_mirror_tag_and_assets() -> bool:
     asset at a non-zero size. No payload is downloaded — see
     release.yml's `mirror-healthcheck` job, which this mirrors.
     """
-    from mmcli.datasets import (
-        DATASET_REGISTRY,
-        DATASETS_DEFAULT_VERSION,
-        DATASETS_MIRROR_TAG_PREFIX,
-    )
+    try:
+        from mmcli.datasets import (
+            DATASET_REGISTRY,
+            DATASETS_DEFAULT_VERSION,
+            DATASETS_MIRROR_TAG_PREFIX,
+        )
+    except ImportError as exc:
+        print(
+            f"FATAL: could not import mmcli.datasets ({exc}). Install mmcli "
+            f"first (`pip install -e .` from the repo root) — see "
+            f"docs/RELEASING.md.",
+            file=sys.stderr,
+        )
+        return False
 
     tag = f"{DATASETS_MIRROR_TAG_PREFIX}{DATASETS_DEFAULT_VERSION}"
     expected = sorted(
@@ -66,11 +77,19 @@ def check_mirror_tag_and_assets() -> bool:
 
     print(f"[1/2] Checking mirror release '{tag}' in {REPO} ...", file=sys.stderr)
 
-    result = subprocess.run(
-        ["gh", "release", "view", tag, "--repo", REPO, "--json", "tagName,assets"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["gh", "release", "view", tag, "--repo", REPO, "--json", "tagName,assets"],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print(
+            "FATAL: the `gh` CLI is not on PATH. Install it and run "
+            "`gh auth status` — see docs/RELEASING.md §5.",
+            file=sys.stderr,
+        )
+        return False
     if result.returncode != 0:
         print(
             f"FATAL: mirror release '{tag}' not reachable via `gh release view` "
@@ -119,9 +138,18 @@ def check_digests() -> bool:
     GET-and-hash gate), streaming its output live rather than capturing it,
     since a multi-minute, multi-hundred-megabyte download with no visible
     progress looks identical to a hang.
+
+    Resolves the script path relative to this file (REPO_ROOT), not the
+    caller's CWD (10-REVIEW.md WR-03): run from anywhere but the repo root,
+    a CWD-relative path can fail with a confusing "step 2/2 (digest
+    verification)" failure that has nothing to do with digests.
     """
     print("[2/2] Running scripts/verify_dataset_digests.py (full digest gate) ...", file=sys.stderr)
-    result = subprocess.run([sys.executable, "scripts/verify_dataset_digests.py"])
+    script = REPO_ROOT / "scripts" / "verify_dataset_digests.py"
+    if not script.is_file():
+        print(f"FATAL: {script} not found", file=sys.stderr)
+        return False
+    result = subprocess.run([sys.executable, str(script)], cwd=str(REPO_ROOT))
     return result.returncode == 0
 
 
