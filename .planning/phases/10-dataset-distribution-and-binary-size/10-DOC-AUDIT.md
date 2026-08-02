@@ -55,9 +55,28 @@ Status corrected below.
 on the remote at all, so its checkout could never succeed. Commit `56f6cc0` had moved the first
 file from the missing branch to the gutted one and left the second alone, which is why the
 symptom persisted through an apparent fix. Both now use `integration`, verified by cloning it as
-`actions/checkout` does and running the command that failed. **The requirement stays half
-discharged**: the fix is unpushed (H-1), so no workflow has yet run, and a green CI is still
-unobserved.
+`actions/checkout` does and running the command that failed. **Resolved 2026-08-02.** Both repos were pushed (closing H-1), and fixing the ref let CI reach
+the test step for the first time in months — which exposed three further defects, each real and
+each invisible until the one before it was fixed:
+
+1. **13 tests failed with `FileNotFoundError`.** They fabricate a fetch by copying a real zip out
+   of `mmcli/example_datasets/`, but `.gitignore` ignores those and only
+   `generic_audio_classification.zip` is tracked. 10-08 had wired these files into CI without
+   checking they could pass there. Fixed with an autouse fixture that synthesises a stand-in for
+   any missing zip and points that entry's digest and size at it; two tests that drive `mmcli
+   init` in a subprocess cannot see an in-process override and are skipped with that reason
+   stated.
+2. **That fixture then broke `TestRegistryInvariants`**, which asserts the registry's recorded
+   sizes — it compared `fan_blade_fault` against a 334-byte stand-in. Worth noting the near
+   miss: written the other way round, it would have passed vacuously, asserting the fixture
+   against itself. That class now opts out and sees the real registry.
+3. **`test_info_lists_models` timed out on macOS** while ubuntu passed — a 30 s subprocess bound
+   for a command that imports the training engine, ~8 s warm locally and far slower on a cold
+   runner. Raised to 120 s; the test asserts output, not speed. It predates this phase and
+   surfaced only because CI could finally reach it.
+
+**Run 30767443908 on `7eeae8b`: success.** REQ-SIZE-02 is now genuinely met rather than
+asserted.
 
 ## M-1 — a MUST-READ reference in CONTEXT.md points at a path that does not resolve
 
