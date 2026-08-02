@@ -60,8 +60,15 @@ from mmcli.datasets import (
 # size at it — these tests assert resolution order and extraction, not contents.
 
 @pytest.fixture(autouse=True)
-def _dataset_zips_present(monkeypatch):
+def _dataset_zips_present(monkeypatch, request):
     import hashlib as _h, os as _os, zipfile as _zf
+    # TestRegistryInvariants asserts the registry's *recorded* sha256 and byte
+    # counts. Overriding them for a stand-in would make it assert against the
+    # stand-in and pass vacuously — it needs the real values, and it reads no
+    # zip, so it opts out entirely.
+    if request.cls is not None and request.cls.__name__ == "TestRegistryInvariants":
+        yield
+        return
     bundled = _os.path.join(_os.path.dirname(datasets.__file__), "example_datasets")
     made = []
     for _name, _meta in DATASET_REGISTRY.items():
