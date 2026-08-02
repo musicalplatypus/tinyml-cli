@@ -24,10 +24,10 @@ the IDs defined in ROADMAP.md. Every phase-10 requirement is claimed by at least
 | REQ-DATA-04 | 10-03, 10-05 | ✅ met — re-verified after unbundling and again after the wheel change |
 | REQ-DATA-05 | 10-02, 10-03, 10-07 | ⚠️ **partially discharged** — reworded 2026-07-23 when the upstream CDN moved (302 → 404) and the datasets were mirrored to this project's own release assets. 10-07 still owes the release-process half |
 | REQ-UX-01 | 10-04, 10-06 | ✅ met — checkpoint driven against the real app |
-| REQ-UX-02 | 10-09 | 🔄 **in flight** — Tasks 1-3 committed across two repos, Task 4 (human verification) pending. See `.continue-here.md` |
+| REQ-UX-02 | 10-09 | ✅ met — checkpoint driven against the real app; removal hard gate passed. Cancel-drops-queue remains unverified (see SUMMARY) |
 | REQ-DOC-01 | 10-05, 10-07 | ⚠️ **partially discharged** — README/README_zh done and the offline recipe executed as written (10-05). `docs/RELEASING.md` does not exist yet; 10-07 owes it |
 
-**Outstanding for the phase:** 10-09 Task 4, then 10-07 (which alone closes REQ-DOC-01 and the
+**Outstanding for the phase:** 10-07 only (which alone closes REQ-DOC-01 and the
 rest of REQ-DATA-05).
 
 ## Phase 11 — PlatypusStudio run archive and training/NAS views

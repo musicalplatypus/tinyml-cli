@@ -544,3 +544,23 @@ scope folded in — is in
 Also added `.planning/REQUIREMENTS.md` (was missing entirely) as a traceability index over
 ROADMAP's requirements — which plan claims each ID and whether it is discharged. Audit found
 full coverage for phase 10: every one of its 11 requirement IDs is claimed by at least one plan.
+
+### 10-09 complete (2026-08-02)
+
+Checkpoint driven against the real app. Library reachable with no project open, affordances
+match the approved table, download/remove verified end to end including the D-11 cache footer
+and D-10 cache_bytes. The removal hard gate passed, including the sharpened variant suggested by
+the cross-AI review: `datasets remove` never touches a packaged or MMCLI_DATASETS-supplied file
+and refuses by construction rather than by failing safe.
+
+Cancel-mid-transfer could not be verified — every dataset downloads faster than a
+screenshot-click round trip on this connection. 10-04 verified the same ProcessRunner
+cancellation in the New Project sheet; what remains unverified is this plan's own addition, that
+cancelling also drops the rest of the bulk queue.
+
+Verification also caught that the earlier cache side-effect fix was incomplete — the shipped
+binary still created the cache directory on a read-only listing via _resolve_dataset_zip.
+Fixed and mutation-tested; only running the real binary revealed it.
+
+Phase 10 is now 9/11. Only 10-07 remains (docs/RELEASING.md, CLI help, Sphinx), which closes
+REQ-DOC-01 and the rest of REQ-DATA-05.
