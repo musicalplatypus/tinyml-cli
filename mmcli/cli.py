@@ -890,6 +890,9 @@ def _add_init_parser(subparsers) -> None:
             "List available datasets:\n"
             "  mmcli init --list\n"
             "  mmcli init --list -m timeseries\n\n"
+            "A dataset missing locally is auto-fetched from the project's GitHub\n"
+            "release mirror only when stderr is a terminal; use --fetch to force\n"
+            "it or --no-fetch to refuse it (D-5 policy, see --fetch/--no-fetch below).\n\n"
             "Set MMCLI_DATASETS to override the built-in datasets directory."
         ),
     )
@@ -940,9 +943,9 @@ def _add_init_parser(subparsers) -> None:
         action="store_true",
         default=None,
         help=(
-            "Force-fetch a missing dataset from TI, regardless of whether\n"
-            "stderr is a terminal. Overrides MMCLI_AUTO_FETCH.\n"
-            "Refused when MMCLI_DATASETS is set (REQ-DATA-03)."
+            "Force-fetch a missing dataset from the GitHub release mirror,\n"
+            "regardless of whether stderr is a terminal. Overrides\n"
+            "MMCLI_AUTO_FETCH. Refused when MMCLI_DATASETS is set (REQ-DATA-03)."
         ),
     )
     fetch_group.add_argument(
@@ -991,8 +994,12 @@ def _add_datasets_parser(subparsers) -> None:
             "'state' is one of:\n"
             "  bundled       resolves via MMCLI_DATASETS or the packaged directory\n"
             "  cached        resolves from ~/.cache/mmcli/datasets/<version>/\n"
-            "  downloadable  has a TI source but is not present locally\n"
-            "  unavailable   neither present nor fetchable"
+            "  downloadable  fetchable from the GitHub release mirror, not present locally\n"
+            "  unavailable   neither present nor fetchable\n\n"
+            "Example:\n"
+            "  mmcli datasets list\n"
+            "  mmcli datasets list --format json\n"
+            "  mmcli datasets list -t arc_fault"
         ),
     )
     list_p.add_argument(
@@ -1018,10 +1025,15 @@ def _add_datasets_parser(subparsers) -> None:
     pull_p = sub.add_parser(
         "pull",
         help="Download and sha256-verify a dataset.",
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
-            "Fetch a dataset from TI and cache it. If a verified copy is\n"
-            "already cached, no network request is made unless --force is\n"
-            "given. Refused when MMCLI_DATASETS is set (REQ-DATA-03)."
+            "Fetch a dataset from the project's GitHub release mirror and\n"
+            "cache it. If a verified copy is already cached, no network\n"
+            "request is made unless --force is given. Refused when\n"
+            "MMCLI_DATASETS is set (REQ-DATA-03).\n\n"
+            "Example:\n"
+            "  mmcli datasets pull fan_blade_fault\n"
+            "  mmcli datasets pull fan_blade_fault --force"
         ),
     )
     pull_p.add_argument(
@@ -1039,10 +1051,13 @@ def _add_datasets_parser(subparsers) -> None:
     path_p = sub.add_parser(
         "path",
         help="Print the resolved on-disk path for a dataset.",
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Print the path mmcli would use for this dataset right now\n"
             "(MMCLI_DATASETS -> bundled -> cache), or exit non-zero if it\n"
-            "is not available locally."
+            "is not available locally.\n\n"
+            "Example:\n"
+            "  mmcli datasets path generic_audio_classification"
         ),
     )
     path_p.add_argument(
@@ -1054,12 +1069,17 @@ def _add_datasets_parser(subparsers) -> None:
     remove_p = sub.add_parser(
         "remove",
         help="Delete a dataset's cache entry (cache-only, idempotent).",
+        formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Delete the version-scoped cache entry for a dataset, never the\n"
             "packaged datasets directory or an MMCLI_DATASETS directory.\n\n"
             "Idempotent: if nothing is cached, exits 0 with an informational\n"
             "message rather than an error. Never recursive, never removes a\n"
-            "directory, and never touches another version's cache entry."
+            "directory, and never touches another version's cache entry.\n"
+            "Prints a NOTE when MMCLI_DATASETS is set, since removing a stale\n"
+            "cache entry there does not change what the dataset resolves to.\n\n"
+            "Example:\n"
+            "  mmcli datasets remove fan_blade_fault"
         ),
     )
     remove_p.add_argument(
@@ -2053,7 +2073,13 @@ def main() -> None:
             "  MMCLI_PYTHON      Python interpreter with tinyml_modelmaker installed\n"
             "                    Default: 'python' or 'python3' on PATH\n"
             "  MMCLI_MODELMAKER  Path to the tinyml-modelmaker source directory\n"
-            "                    (auto-detected if MMCLI_PYTHON is set correctly)\n\n"
+            "                    (auto-detected if MMCLI_PYTHON is set correctly)\n"
+            "  MMCLI_DATASETS    Directory of dataset zips to use instead of\n"
+            "                    fetching. Setting it disables all dataset\n"
+            "                    fetching — see 'Datasets' in README.md.\n"
+            "                    Default: unset (fetch from the GitHub release\n"
+            "                    mirror; only generic_audio_classification is\n"
+            "                    bundled)\n\n"
             "Run 'mmcli help' to see all subcommands and options at once.\n"
             "Run 'mmcli <subcommand> --help' for subcommand-specific help."
         ),
