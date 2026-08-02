@@ -21,6 +21,7 @@ If you add a new fetchable entry, you must add both fields or the module will
 refuse to import.
 """
 
+import errno
 import hashlib
 import os
 import sys
@@ -372,6 +373,45 @@ def _resolve_dataset_zip(name: str) -> str | None:
     return None
 
 
+def cache_entry_path(name: str) -> str:
+    """Return the version-scoped cache path *name*'s zip would occupy,
+    regardless of whether a file currently exists there.
+
+    Deliberately **not** `_resolve_dataset_zip`: that function answers "where
+    does this dataset currently resolve from" and can return a path inside
+    the primary directory (bundled, or the user's own `MMCLI_DATASETS`
+    directory) — precisely the paths `datasets remove` (10-09-PLAN.md) must
+    never touch. This function only ever answers "where would the cache
+    entry be", so the source keeps those two questions structurally separate
+    rather than relying on a caller to filter the resolved path correctly.
+
+    Raises ``KeyError`` on an unknown name, same as `dataset_url`.
+    """
+    meta = DATASET_REGISTRY[name]  # KeyError on unknown name, deliberately
+    version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
+    return os.path.join(_cache_dir(version), meta["filename"])
+
+
+def cache_entry_size(name: str) -> int | None:
+    """Return the on-disk size in bytes of *name*'s cache entry if one
+    exists, or ``None`` if it does not.
+
+    This is independent of `_dataset_state` / resolution: a dataset can
+    resolve as ``bundled`` (packaged copy, or a file in the user's own
+    `MMCLI_DATASETS` directory) while *also* holding a stale cache entry from
+    an earlier download, since the packaged copy wins resolution. That disk
+    usage is otherwise invisible and unreclaimable — see CONTEXT.md D-10.
+    Uses the actual file size on disk, not the registry's recorded `bytes`,
+    so a partially-written or since-corrupted entry still reports a truthful
+    reclaimable size.
+    """
+    path = cache_entry_path(name)
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
 # Closed allowlist of permitted cross-host redirect PAIRS, keyed on the
 # original request host (10-03-PLAN.md D-C; amends 10-02's T-10-02-01/05).
 # GitHub release-asset downloads at github.com/.../releases/download/...
@@ -441,9 +481,10 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
 
     Raises RuntimeError on: oversized/truncated body, checksum mismatch,
     cross-host redirect, non-2xx HTTP status (404 names the URL and this
-    dataset), or any lower-level urllib/socket failure. The temp file is
-    always removed on any failure path; nothing is left on disk "for
-    debugging".
+    dataset), an out-of-space write (ENOSPC, named plainly rather than
+    echoing the raw errno string), or any lower-level urllib/socket failure.
+    The temp file is always removed on any failure path; nothing is left on
+    disk "for debugging".
     """
     dest_path = os.path.join(cache_dir, filename)
     # 1% of the expected size or 1 KiB, whichever is larger — enough slack
@@ -523,7 +564,20 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
                                 f"{tolerance}-byte tolerance. The server "
                                 f"may be hostile or misconfigured."
                             )
-                        out.write(chunk)
+                        try:
+                            out.write(chunk)
+                        except OSError as exc:
+                            if exc.errno == errno.ENOSPC:
+                                raise RuntimeError(
+                                    f"Not enough free disk space to write "
+                                    f"'{name}' to {cache_dir}: the disk is "
+                                    f"full. Free up space and retry "
+                                    f"'mmcli datasets pull {name}'."
+                                ) from exc
+                            raise RuntimeError(
+                                f"Failed writing '{name}' to {cache_dir}: "
+                                f"{exc}"
+                            ) from exc
                         hasher.update(chunk)
                         if bar is not None:
                             bar.update(len(chunk))

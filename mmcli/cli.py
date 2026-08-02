@@ -965,14 +965,16 @@ def _add_datasets_parser(subparsers) -> None:
         formatter_class=argparse.RawTextHelpFormatter,
         description=(
             "Manage the example datasets used by 'mmcli init'.\n\n"
-            "  list   Show every dataset with its size and availability state\n"
-            "  pull   Download and sha256-verify a dataset (cache short-circuits)\n"
-            "  path   Print the resolved on-disk path for a dataset\n\n"
+            "  list    Show every dataset with its size and availability state\n"
+            "  pull    Download and sha256-verify a dataset (cache short-circuits)\n"
+            "  path    Print the resolved on-disk path for a dataset\n"
+            "  remove  Delete a dataset's cache entry (cache-only, idempotent)\n\n"
             "Examples:\n"
             "  mmcli datasets list\n"
             "  mmcli datasets list --format json\n"
             "  mmcli datasets pull fan_blade_fault\n"
-            "  mmcli datasets path generic_audio_classification\n\n"
+            "  mmcli datasets path generic_audio_classification\n"
+            "  mmcli datasets remove fan_blade_fault\n\n"
             "Set MMCLI_DATASETS to override the built-in datasets directory\n"
             "(disables fetching entirely, see REQ-DATA-03)."
         ),
@@ -1047,6 +1049,23 @@ def _add_datasets_parser(subparsers) -> None:
         "dataset_name",
         metavar="DATASET_NAME",
         help="Name of the dataset to locate (see 'mmcli datasets list').",
+    )
+
+    remove_p = sub.add_parser(
+        "remove",
+        help="Delete a dataset's cache entry (cache-only, idempotent).",
+        description=(
+            "Delete the version-scoped cache entry for a dataset, never the\n"
+            "packaged datasets directory or an MMCLI_DATASETS directory.\n\n"
+            "Idempotent: if nothing is cached, exits 0 with an informational\n"
+            "message rather than an error. Never recursive, never removes a\n"
+            "directory, and never touches another version's cache entry."
+        ),
+    )
+    remove_p.add_argument(
+        "dataset_name",
+        metavar="DATASET_NAME",
+        help="Name of the dataset to remove from the cache (see 'mmcli datasets list').",
     )
 
 
@@ -1474,8 +1493,22 @@ def _dataset_record(name: str) -> dict:
     is a committed cross-repo interface — PlatypusStudio (plan 10-04) decodes
     it as `DatasetCatalog.swift`. Do not rename or remove these keys without
     updating that consumer.
+
+    `cache_bytes` is an ADDITIVE field (10-09-PLAN.md / CONTEXT.md D-10):
+    the size in bytes of this dataset's cache entry if one exists on disk,
+    or `null` if none does. It is deliberately independent of `state` — a
+    dataset can be `bundled` (packaged copy, or a file in the user's own
+    MMCLI_DATASETS directory) *and* still hold a stale cache entry from an
+    earlier download, since the packaged copy wins resolution. Without this
+    field that disk usage is invisible and unreclaimable from a GUI. Existing
+    consumers of this contract that only read `name`/`version`/`state`/
+    `bytes` are unaffected by this addition.
     """
-    from mmcli.datasets import DATASET_REGISTRY, DATASETS_DEFAULT_VERSION
+    from mmcli.datasets import (
+        DATASET_REGISTRY,
+        DATASETS_DEFAULT_VERSION,
+        cache_entry_size,
+    )
 
     meta = DATASET_REGISTRY[name]
     version = None
@@ -1486,6 +1519,7 @@ def _dataset_record(name: str) -> dict:
         "version": version,
         "state": _dataset_state(name),
         "bytes": meta.get("bytes", 0),
+        "cache_bytes": cache_entry_size(name),
         "task_types": meta.get("task_types", []),
         "module": meta.get("module"),
         "description": meta.get("description", ""),
@@ -1579,6 +1613,81 @@ def _handle_datasets_path(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(path)
+
+
+def _handle_datasets_remove(args: argparse.Namespace) -> None:
+    """`mmcli datasets remove <name>` — cache-only deletion with a path guard.
+
+    This intentionally does NOT reuse `_resolve_dataset_zip` (which can
+    return a path inside the packaged datasets directory or an
+    MMCLI_DATASETS directory) — the target is always computed from
+    `cache_entry_path`, and re-asserted to sit inside `_cache_dir(version)`
+    immediately before unlinking, so a future refactor of the path
+    computation cannot silently widen what this command is allowed to
+    delete (10-09-PLAN.md T-10-09-01).
+    """
+    from mmcli.datasets import (
+        DATASET_REGISTRY,
+        DATASETS_DEFAULT_VERSION,
+        _cache_dir,
+        cache_entry_path,
+    )
+
+    name = args.dataset_name
+    if name not in DATASET_REGISTRY:
+        available = ", ".join(sorted(DATASET_REGISTRY.keys()))
+        print(
+            f"ERROR: Unknown dataset '{name}'.\n"
+            f"Available datasets: {available}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    env_datasets = os.environ.get("MMCLI_DATASETS")
+    if env_datasets:
+        # Removing a cache entry is harmless here: the cache is not what
+        # resolves while MMCLI_DATASETS is set (fetch_dataset refuses
+        # unconditionally, REQ-DATA-03), so this is informational, not a
+        # refusal — a policy branch the app would otherwise have to model
+        # for no gain.
+        print(
+            f"NOTE: MMCLI_DATASETS is set to '{env_datasets}'; removing the "
+            f"cache entry does not change what '{name}' resolves to in "
+            f"this environment."
+        )
+
+    meta = DATASET_REGISTRY[name]
+    version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
+    target = cache_entry_path(name)
+
+    # Re-assert immediately before unlinking that the target sits inside the
+    # version-scoped cache directory for this entry — not redundant with how
+    # the path was computed; this is the assertion that survives a future
+    # refactor of cache_entry_path itself. Never recurse, never remove a
+    # directory, never sweep another version's copy.
+    expected_dir = os.path.normpath(_cache_dir(version))
+    actual_dir = os.path.normpath(os.path.dirname(target))
+    if actual_dir != expected_dir:
+        print(
+            f"ERROR: Refusing to remove '{name}': computed target "
+            f"{target!r} is not inside the version-scoped cache directory "
+            f"{expected_dir!r}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not os.path.isfile(target):
+        print(f"'{name}' is not cached; nothing to remove.")
+        sys.exit(0)
+
+    freed_bytes = os.path.getsize(target)
+    try:
+        os.unlink(target)
+    except OSError as exc:
+        print(f"ERROR: Failed to remove {target!r}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"✓ Removed cache entry for '{name}': {target} ({freed_bytes} bytes freed)")
 
 
 # ---------------------------------------------------------------------------
@@ -2035,6 +2144,8 @@ def main() -> None:
             _handle_datasets_pull(args)
         elif args.datasets_subcommand == "path":
             _handle_datasets_path(args)
+        elif args.datasets_subcommand == "remove":
+            _handle_datasets_remove(args)
         sys.exit(0)
 
     if args.command == "info":
