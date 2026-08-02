@@ -83,40 +83,70 @@ _SMALL_TI_DATASET = "generic_timeseries_forecasting"
 # *contents* of a dataset, only on a file existing whose digest matches the
 # registry. On a developer machine every zip is present and nothing is
 # substituted, so this changes nothing locally.
+#
+# 10-REVIEW.md WR-06: stand-ins are staged in a pytest tmp_path_factory
+# directory and `_datasets_dir()` is redirected there — never written into the
+# real `mmcli/example_datasets/` package tree. `.gitignore` hid the previous
+# on-disk leftovers from `git status`, so any hard interrupt (Ctrl-C, a
+# crashing collection, an OOM kill) that skipped the old teardown's `os.unlink`
+# left up to nine fake zips permanently in the developer's package tree —
+# silently changing `mmcli init --dataset` behaviour and flipping
+# `_REAL_ZIPS_PRESENT` below, from then on, for every future test run. A
+# pytest-managed tmp_path_factory directory needs no manual cleanup and is
+# never mistaken for a real bundled dataset by out-of-process code.
 
 
-def _ensure_dataset_zips_available(monkeypatch):
-    """Materialise a stand-in for every registry zip missing from the checkout."""
+def _ensure_dataset_zips_available(tmp_path_factory, monkeypatch):
+    """Stage a complete set of registry zips (real files copied, missing ones
+    synthesised as stand-ins) in a throwaway directory, and point
+    `_datasets_dir()` at it — never at the real package directory."""
     import zipfile
-    made = []
+    stage = tmp_path_factory.mktemp("bundled")
     for name, meta in DATASET_REGISTRY.items():
         src = os.path.join(_REAL_BUNDLED_DIR, meta["filename"])
+        dst = os.path.join(str(stage), meta["filename"])
         if os.path.exists(src):
+            shutil.copyfile(src, dst)
             continue
-        os.makedirs(_REAL_BUNDLED_DIR, exist_ok=True)
-        with zipfile.ZipFile(src, "w") as z:
+        with zipfile.ZipFile(dst, "w") as z:
             z.writestr(f"{name}/README.txt", f"stand-in for {name}\n")
         monkeypatch.setitem(
             DATASET_REGISTRY[name], "sha256",
-            hashlib.sha256(open(src, "rb").read()).hexdigest(),
+            hashlib.sha256(open(dst, "rb").read()).hexdigest(),
         )
         monkeypatch.setitem(
-            DATASET_REGISTRY[name], "bytes", os.path.getsize(src),
+            DATASET_REGISTRY[name], "bytes", os.path.getsize(dst),
         )
-        made.append(src)
-    return made
+
+    def _redirected_datasets_dir():
+        # Preserve _datasets_dir()'s real MMCLI_DATASETS-first priority
+        # (see mmcli/datasets.py) — only the *fallback* (bundled) directory
+        # is redirected to the staged copy, not the env-var override, so
+        # tests that set MMCLI_DATASETS to exercise the air-gap path still
+        # see their own directory, not the stand-in stage.
+        env = os.environ.get("MMCLI_DATASETS")
+        if env and os.path.isdir(env):
+            return env
+        return str(stage)
+
+    monkeypatch.setattr(datasets_mod, "_datasets_dir", _redirected_datasets_dir)
+    return str(stage)
 
 
 @pytest.fixture(autouse=True)
-def dataset_zips_present(monkeypatch):
-    """Autouse so every test in this module sees a complete set of zips."""
-    made = _ensure_dataset_zips_available(monkeypatch)
-    yield
-    for f in made:
-        try:
-            os.unlink(f)
-        except OSError:
-            pass
+def dataset_zips_present(tmp_path_factory, monkeypatch):
+    """Autouse so every test in this module sees a complete set of zips,
+    staged outside the real package tree (10-REVIEW.md WR-06).
+
+    Yields the staged directory path itself (not just `_datasets_dir()`'s
+    return value), for tests that need "a valid digest-matching source zip
+    for the currently active registry state" independent of whatever a test
+    does to `_datasets_dir()` (e.g. the `hide_bundled` fixture, which
+    overrides it to an empty directory — the staged zips still need to be
+    reachable as a copy source in that case).
+    """
+    stage = _ensure_dataset_zips_available(tmp_path_factory, monkeypatch)
+    yield stage
 
 
 _REAL_ZIPS_PRESENT = all(
@@ -289,7 +319,7 @@ class TestDatasetsListJson:
         self, tmp_path, monkeypatch, capsys
     ):
         meta = DATASET_REGISTRY["pir_detection"]
-        src = os.path.join(_REAL_BUNDLED_DIR, meta["filename"])
+        src = os.path.join(datasets_mod._datasets_dir(), meta["filename"])
         env_dir = tmp_path / "air_gapped"
         env_dir.mkdir()
         shutil.copyfile(src, env_dir / meta["filename"])
@@ -303,12 +333,12 @@ class TestDatasetsListJson:
         assert records["pir_detection"]["state"] == "bundled"
 
     def test_state_cached_when_resolved_from_cache(
-        self, hide_bundled, isolated_cache, monkeypatch, capsys
+        self, dataset_zips_present, hide_bundled, isolated_cache, monkeypatch, capsys
     ):
         meta = DATASET_REGISTRY[_SMALL_TI_DATASET]
         cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
         shutil.copyfile(
-            os.path.join(_REAL_BUNDLED_DIR, meta["filename"]),
+            os.path.join(dataset_zips_present, meta["filename"]),
             os.path.join(cache_dir, meta["filename"]),
         )
         _forbid_download(monkeypatch)
@@ -351,7 +381,7 @@ class TestDatasetsListJson:
         meta = DATASET_REGISTRY[_SMALL_TI_DATASET]
         cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
         cache_path = os.path.join(cache_dir, meta["filename"])
-        shutil.copyfile(os.path.join(_REAL_BUNDLED_DIR, meta["filename"]), cache_path)
+        shutil.copyfile(os.path.join(datasets_mod._datasets_dir(), meta["filename"]), cache_path)
 
         code, out, err = _run(monkeypatch, capsys, ["datasets", "list", "--format", "json"])
         assert code == 0, err
@@ -401,12 +431,12 @@ class TestDatasetsPull:
             assert name in err
 
     def test_pull_already_cached_issues_no_request_and_exits_zero(
-        self, hide_bundled, isolated_cache, monkeypatch, capsys
+        self, dataset_zips_present, hide_bundled, isolated_cache, monkeypatch, capsys
     ):
         meta = DATASET_REGISTRY[_SMALL_TI_DATASET]
         cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
         shutil.copyfile(
-            os.path.join(_REAL_BUNDLED_DIR, meta["filename"]),
+            os.path.join(dataset_zips_present, meta["filename"]),
             os.path.join(cache_dir, meta["filename"]),
         )
         _forbid_download(monkeypatch)
@@ -553,12 +583,12 @@ class TestDatasetsRemove:
         assert err == ""
 
     def test_remove_present_cache_entry_deletes_it_and_reports_bytes_freed(
-        self, hide_bundled, isolated_cache, monkeypatch, capsys
+        self, dataset_zips_present, hide_bundled, isolated_cache, monkeypatch, capsys
     ):
         meta = DATASET_REGISTRY[_SMALL_TI_DATASET]
         cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
         cache_path = os.path.join(cache_dir, meta["filename"])
-        shutil.copyfile(os.path.join(_REAL_BUNDLED_DIR, meta["filename"]), cache_path)
+        shutil.copyfile(os.path.join(dataset_zips_present, meta["filename"]), cache_path)
         expected_bytes = os.path.getsize(cache_path)
 
         code, out, err = _run(monkeypatch, capsys, ["datasets", "remove", _SMALL_TI_DATASET])
@@ -587,7 +617,7 @@ class TestDatasetsRemove:
         `_resolve_dataset_zip` returns.
         """
         meta = DATASET_REGISTRY[_SMALL_TI_DATASET]
-        primary_path = os.path.join(_REAL_BUNDLED_DIR, meta["filename"])
+        primary_path = os.path.join(datasets_mod._datasets_dir(), meta["filename"])
         assert os.path.isfile(primary_path)
         original_bytes = open(primary_path, "rb").read()
 
@@ -598,7 +628,7 @@ class TestDatasetsRemove:
         assert open(primary_path, "rb").read() == original_bytes
 
     def test_remove_under_mmcli_datasets_prints_note_and_does_not_refuse(
-        self, hide_bundled, isolated_cache, tmp_path, monkeypatch, capsys
+        self, dataset_zips_present, hide_bundled, isolated_cache, tmp_path, monkeypatch, capsys
     ):
         """Removal must not refuse under MMCLI_DATASETS (10-09-PLAN.md);
         instead it prints one informational line and proceeds, since the
@@ -607,7 +637,7 @@ class TestDatasetsRemove:
         meta = DATASET_REGISTRY[_SMALL_TI_DATASET]
         cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
         cache_path = os.path.join(cache_dir, meta["filename"])
-        shutil.copyfile(os.path.join(_REAL_BUNDLED_DIR, meta["filename"]), cache_path)
+        shutil.copyfile(os.path.join(dataset_zips_present, meta["filename"]), cache_path)
 
         env_dir = tmp_path / "air_gapped"
         env_dir.mkdir()
@@ -642,12 +672,12 @@ class TestDatasetsRemove:
         assert os.path.isfile(escaped_path)
 
     def test_remove_unlink_oserror_reports_error_and_exits_1(
-        self, hide_bundled, isolated_cache, monkeypatch, capsys
+        self, dataset_zips_present, hide_bundled, isolated_cache, monkeypatch, capsys
     ):
         meta = DATASET_REGISTRY[_SMALL_TI_DATASET]
         cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
         cache_path = os.path.join(cache_dir, meta["filename"])
-        shutil.copyfile(os.path.join(_REAL_BUNDLED_DIR, meta["filename"]), cache_path)
+        shutil.copyfile(os.path.join(dataset_zips_present, meta["filename"]), cache_path)
 
         def fake_unlink(path):
             raise OSError("permission denied (simulated)")

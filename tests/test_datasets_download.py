@@ -59,10 +59,18 @@ from mmcli.datasets import (
 # the two TestResolutionOrder cases below fail with FileNotFoundError. Synthesise
 # a valid stand-in for any missing zip and point that entry's recorded digest and
 # size at it — these tests assert resolution order and extraction, not contents.
+#
+# 10-REVIEW.md WR-06: stand-ins are staged in a pytest tmp_path_factory
+# directory and `_datasets_dir()` is redirected there — never written into the
+# real `mmcli/example_datasets/` package tree, which `.gitignore` hid from
+# `git status`. Any hard interrupt that skipped the old teardown's
+# `os.unlink` left fake zips permanently in the developer's package tree,
+# silently changing `mmcli init --dataset` behaviour from then on. A
+# pytest-managed tmp_path_factory directory needs no manual cleanup.
 
 @pytest.fixture(autouse=True)
-def _dataset_zips_present(monkeypatch, request):
-    import hashlib as _h, os as _os, zipfile as _zf
+def _dataset_zips_present(monkeypatch, request, tmp_path_factory):
+    import hashlib as _h, os as _os, shutil as _sh, zipfile as _zf
     # TestRegistryInvariants asserts the registry's *recorded* sha256 and byte
     # counts. Overriding them for a stand-in would make it assert against the
     # stand-in and pass vacuously — it needs the real values, and it reads no
@@ -71,25 +79,31 @@ def _dataset_zips_present(monkeypatch, request):
         yield
         return
     bundled = _os.path.join(_os.path.dirname(datasets.__file__), "example_datasets")
-    made = []
+    stage = tmp_path_factory.mktemp("bundled")
     for _name, _meta in DATASET_REGISTRY.items():
         _src = _os.path.join(bundled, _meta["filename"])
+        _dst = _os.path.join(str(stage), _meta["filename"])
         if _os.path.exists(_src):
+            _sh.copyfile(_src, _dst)
             continue
-        _os.makedirs(bundled, exist_ok=True)
-        with _zf.ZipFile(_src, "w") as _z:
+        with _zf.ZipFile(_dst, "w") as _z:
             _z.writestr(f"{_name}/classes/a/sample.csv", "t,v\n0,1\n")
             _z.writestr(f"{_name}/classes/b/sample.csv", "t,v\n0,2\n")
         monkeypatch.setitem(DATASET_REGISTRY[_name], "sha256",
-                            _h.sha256(open(_src, "rb").read()).hexdigest())
-        monkeypatch.setitem(DATASET_REGISTRY[_name], "bytes", _os.path.getsize(_src))
-        made.append(_src)
+                            _h.sha256(open(_dst, "rb").read()).hexdigest())
+        monkeypatch.setitem(DATASET_REGISTRY[_name], "bytes", _os.path.getsize(_dst))
+
+    def _redirected_datasets_dir():
+        # Preserve _datasets_dir()'s real MMCLI_DATASETS-first priority (see
+        # mmcli/datasets.py) — only the *fallback* (bundled) directory is
+        # redirected to the staged copy, not the env-var override.
+        _env = _os.environ.get("MMCLI_DATASETS")
+        if _env and _os.path.isdir(_env):
+            return _env
+        return str(stage)
+
+    monkeypatch.setattr(datasets, "_datasets_dir", _redirected_datasets_dir)
     yield
-    for _f in made:
-        try:
-            _os.unlink(_f)
-        except OSError:
-            pass
 
 
 class _RoutedHandler(http.server.BaseHTTPRequestHandler):
@@ -369,8 +383,11 @@ class TestResolutionOrder:
             f.write(b"bogus cache content that must never be preferred")
 
         resolved = _resolve_dataset_zip(name)
-        bundled_dir = os.path.join(os.path.dirname(datasets.__file__), "example_datasets")
-        assert resolved == os.path.join(bundled_dir, meta["filename"])
+        # Resolved dynamically via the (possibly test-staged — see
+        # _dataset_zips_present, 10-REVIEW.md WR-06) _datasets_dir(), not a
+        # hardcoded real-package-tree path, so this stays correct regardless
+        # of where bundled zips are staged for the test run.
+        assert resolved == os.path.join(datasets._datasets_dir(), meta["filename"])
 
     def test_cache_used_when_neither_env_nor_bundled(self, isolated_cache, fake_ti_entry):
         name = fake_ti_entry["name"]
