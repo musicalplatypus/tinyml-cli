@@ -60,6 +60,16 @@ and updated without rebuilding the binary.
   which `analyze` needs for CSV/npy/pkl and which are *already* lazily imported — so the usual
   deferral trick is spent, and going further means dropping that input support.
 
+  **Caveats on these figures, added by the 2026-08-02 document audit.** PyInstaller output is
+  not byte-reproducible: successive builds of identical source measured 25,256,016 / 25,256,048 /
+  25,258,768 bytes, and the pre-exclusion binary 31,839,872 / 31,840,752. Those differences are
+  build variance, not disagreement between documents, and are immaterial against ~2 MB of
+  ceiling headroom. **The startup bound is tighter than it looks:** `10-03-SUMMARY.md` records
+  `~6.6–9.6 s` on this same machine, and the exclusions did not change startup — so the 9.6 s
+  observation still applies and would fail the 8 s bound. Re-measured 2026-08-02 over 8 runs:
+  6.19–7.17 s, median ~6.45. The bound holds today but has less margin than the 6.1–6.3 s row
+  below implies. See `10-DOC-AUDIT.md` M-2 and M-3.
+
   **Startup — 8 s, and `--onefile` is kept.** Only `--onedir` reaches 2.5 s, and its cost is
   changing every platform's distribution shape from one file to a folder; the released assets
   are single binaries today. The ~6.1 s is PyInstaller unpacking the archive on each launch,

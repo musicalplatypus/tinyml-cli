@@ -144,11 +144,17 @@ Nothing here re-opens executed work. Where a decision below changes something al
 - `.planning/phases/10-dataset-distribution-and-binary-size/10-03-SUMMARY-attempt1-blocked.md`
   — the blocked first attempt; why the upstream moved
 
-### PlatypusStudio (separate repo, `../PlatypusStudio`)
-- `docs/superpowers/specs/2026-07-09-platypus-studio-design.md` §"Dataset management" — the
+### PlatypusStudio — code in `../PlatypusStudio`, specs in the PARENT checkout
+
+**The specs are not in the PlatypusStudio repo.** They live in the enclosing `PlatypusVibes`
+checkout, one level above both repos, and are given here as absolute paths because neither
+repo root resolves them:
+
+- `/Users/martin/Documents/repos/PlatypusVibes/docs/superpowers/specs/2026-07-09-platypus-studio-design.md`
+  §"Dataset management" — the
   approved contract for the library and gated project creation, including the state/affordance
   table; also §"Workspace window" and §"Architecture" (MMCLIKit = no SwiftUI, unit-testable)
-- `docs/superpowers/specs/2026-07-09-platypus-studio-project-format.md` — project descriptor
+- `/Users/martin/Documents/repos/PlatypusVibes/docs/superpowers/specs/2026-07-09-platypus-studio-project-format.md` — project descriptor
   and the run-directory clobber finding
 
 ### Standing constraint
