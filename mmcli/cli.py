@@ -2154,12 +2154,39 @@ def main() -> None:
             )
             sys.exit(2)
         from mmcli.datasets import DATASET_REGISTRY, _resolve_dataset_zip, extract_dataset
+        # Local rebind: a later `import ... os` further down in this same
+        # function makes `os` function-local for all of main() per Python's
+        # scoping rules, so the module-level `os` isn't visible yet at this
+        # point without an explicit (idempotent) import here.
+        import os
 
         # D-5 auto-fetch policy: only consulted when the dataset is not
         # already available (bundled or cached). A dataset that is already
         # present behaves exactly as before this phase — the policy is never
         # invoked in that case.
         if args.dataset in DATASET_REGISTRY:
+            meta = DATASET_REGISTRY[args.dataset]
+            # Cheap argument validation hoisted ahead of the fetch (10-REVIEW.md
+            # WR-01): both checks below are what extract_dataset() would reject
+            # anyway, but only after fetch_dataset() has already downloaded up
+            # to tens of MB. Fail fast on pure argument errors instead.
+            if args.task and args.task not in meta.get("task_types", []):
+                compatible = ", ".join(meta["task_types"])
+                print(
+                    f"ERROR: Dataset '{args.dataset}' is not compatible with "
+                    f"task '{args.task}'.\n"
+                    f"Compatible tasks: {compatible}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            if os.path.exists(os.path.abspath(args.project)):
+                print(
+                    f"ERROR: Project directory already exists: "
+                    f"{os.path.abspath(args.project)}\n"
+                    "Choose a different name or remove the existing directory.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             already_present = _resolve_dataset_zip(args.dataset) is not None
             if not already_present:
                 _apply_init_fetch_policy(args.dataset, args)

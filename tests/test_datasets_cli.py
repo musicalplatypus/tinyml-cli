@@ -776,6 +776,42 @@ class TestInitAutoFetchPolicy:
         assert code == 2
         assert not project.exists()
 
+    def test_incompatible_task_rejected_before_any_download_attempt(
+        self, hide_bundled, isolated_cache, monkeypatch, capsys, tmp_path
+    ):
+        # 10-REVIEW.md WR-01: a pure argument error (incompatible --task) must
+        # be caught before fetch_dataset() is ever invoked, not after tens of
+        # MB have already been downloaded.
+        _forbid_download(monkeypatch)
+
+        project = tmp_path / "proj_bad_task"
+        code, out, err = _run(
+            monkeypatch, capsys,
+            [
+                "init",
+                "--task", "mnist_image_classification",  # incompatible with _SMALL_TI_DATASET
+                "--dataset", _SMALL_TI_DATASET,
+                "--project", str(project),
+            ],
+        )
+        assert code == 2
+        assert "not compatible with task" in err
+        assert not project.exists()
+
+    def test_existing_project_dir_rejected_before_any_download_attempt(
+        self, hide_bundled, isolated_cache, monkeypatch, capsys, tmp_path
+    ):
+        # 10-REVIEW.md WR-01: "project directory already exists" must be
+        # caught before fetch_dataset() is ever invoked.
+        _forbid_download(monkeypatch)
+
+        project = tmp_path / "proj_exists"
+        project.mkdir()
+
+        code, out, err = _run(monkeypatch, capsys, self._init_argv(project))
+        assert code == 2
+        assert "already exists" in err
+
 
 class TestCacheInspectionHasNoSideEffects:
     """Asking where a cache entry would be must not create anything.
