@@ -134,7 +134,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: musicalplatypus/tinyml-tensorlab
-          ref: platypus_dev_1.4
+          ref: integration
           path: tinyml-tensorlab
 
       - uses: actions/setup-python@v5

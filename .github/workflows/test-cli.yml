@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: musicalplatypus/tinyml-tensorlab
-          ref: platypus_dev
+          ref: integration
           path: tinyml-tensorlab
 
       - name: Set up Python 3.10
