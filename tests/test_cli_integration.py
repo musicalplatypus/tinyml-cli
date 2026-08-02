@@ -27,7 +27,12 @@ TASK_TYPES = [
 ]
 
 
-def _run_cli(*args, timeout=30):
+# 120s, not 30: these shell out to `mmcli info`, which imports the training
+# engine (torch and friends) in a subprocess. That takes ~8s warm on a developer
+# machine but far longer on a cold hosted runner — macOS timed out at 30s while
+# ubuntu passed. The tests assert what the command prints, not how fast it runs,
+# so the bound only needs to be generous enough not to fail for being slow.
+def _run_cli(*args, timeout=120):
     """Run mmcli with args and return (returncode, stdout, stderr)."""
     cmd = MMCLI + list(args)
     result = subprocess.run(
