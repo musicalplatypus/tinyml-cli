@@ -684,8 +684,15 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
         os.replace(tmp_path, dest_path)
         return dest_path
     except BaseException:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        # 10-REVIEW.md IN-07: best-effort cleanup only. If the unlink itself
+        # raises (a race with another process, a read-only mount), that
+        # OSError must not replace the checksum-mismatch/oversize-body/etc.
+        # error the user actually needs to see.
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
         raise
 
 

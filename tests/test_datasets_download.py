@@ -714,6 +714,34 @@ class TestDownloadToCacheFailureModes:
             )
         assert os.listdir(cache_dir) == []
 
+    def test_cleanup_unlink_failure_does_not_mask_the_original_error(
+        self, isolated_cache, http_server, monkeypatch
+    ):
+        # 10-REVIEW.md IN-07: the except-BaseException cleanup handler's own
+        # os.unlink(tmp_path) can itself raise (a race with another process,
+        # a read-only mount). That OSError must not replace the original
+        # error (here, a checksum mismatch) the user actually needs to see.
+        base_url, handler = http_server
+        body = b"actual bytes served"
+        wrong_sha256 = hashlib.sha256(b"different bytes entirely").hexdigest()
+        handler.routes["/bad.zip"] = {"body": body}
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+
+        real_unlink = os.unlink
+
+        def _flaky_unlink(path, *a, **kw):
+            if path.endswith(".part"):
+                raise OSError("simulated: read-only mount")
+            return real_unlink(path, *a, **kw)
+
+        monkeypatch.setattr(os, "unlink", _flaky_unlink)
+
+        with pytest.raises(RuntimeError, match="Checksum mismatch"):
+            _download_to_cache(
+                f"{base_url}/bad.zip", cache_dir, "bad.zip",
+                wrong_sha256, len(body), "bad",
+            )
+
 
 class TestAllowedCrossHostRedirect:
     """10-03-PLAN.md D-C: the redirect handler's allowlist is a closed,
