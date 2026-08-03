@@ -126,6 +126,39 @@ class TestCheckMirrorTagAndAssets:
         monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
         assert release_preflight.check_mirror_tag_and_assets() is True
 
+    def test_default_progress_label_is_1_of_2(
+        self, release_preflight, capsys, monkeypatch
+    ):
+        tag = _mirror_tag()
+        assets = [{"name": name, "size": 12345} for name in _expected_filenames()]
+        fake = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"tagName": tag, "assets": assets}),
+            stderr="",
+        )
+        monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
+        release_preflight.check_mirror_tag_and_assets()
+        assert "[1/2]" in capsys.readouterr().err
+
+    def test_total_steps_one_progress_label_is_1_of_1(
+        self, release_preflight, capsys, monkeypatch
+    ):
+        # 10-REVIEW.md IN-02: under --skip-digests, main() passes
+        # total_steps=1 since the digest step never runs in this
+        # invocation -- the label must say so, not a hardcoded "[1/2]".
+        tag = _mirror_tag()
+        assets = [{"name": name, "size": 12345} for name in _expected_filenames()]
+        fake = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"tagName": tag, "assets": assets}),
+            stderr="",
+        )
+        monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
+        release_preflight.check_mirror_tag_and_assets(total_steps=1)
+        err = capsys.readouterr().err
+        assert "[1/1]" in err
+        assert "[1/2]" not in err
+
     def test_gh_non_json_stdout_fails_closed_with_fatal_message(
         self, release_preflight, capsys, monkeypatch
     ):
@@ -229,7 +262,7 @@ class TestReleasePreflightMain:
         self, release_preflight, monkeypatch
     ):
         monkeypatch.setattr(
-            release_preflight, "check_mirror_tag_and_assets", lambda: False
+            release_preflight, "check_mirror_tag_and_assets", lambda **kw: False
         )
         digests_called = []
         monkeypatch.setattr(
@@ -239,23 +272,60 @@ class TestReleasePreflightMain:
         assert code == 1
         assert digests_called == []
 
-    def test_skip_digests_returns_zero_without_running_digest_gate(
+    def test_skip_digests_returns_partial_exit_code_without_running_digest_gate(
         self, release_preflight, monkeypatch
     ):
+        # 10-REVIEW.md IN-02: --skip-digests must NOT exit 0 -- that would
+        # let a wrapper checking only $? mistake a skipped ~131 MB digest
+        # gate for a full preflight pass. PARTIAL_EXIT_CODE (3) is
+        # deliberately distinct from both 0 (full PASS) and 1 (a check
+        # actually failed).
         monkeypatch.setattr(
-            release_preflight, "check_mirror_tag_and_assets", lambda: True
+            release_preflight, "check_mirror_tag_and_assets", lambda **kw: True
         )
         digests_called = []
         monkeypatch.setattr(
             release_preflight, "check_digests", lambda: digests_called.append(1) or True
         )
         code = release_preflight.main(["--skip-digests"])
-        assert code == 0
+        assert code == release_preflight.PARTIAL_EXIT_CODE
+        assert code != 0
         assert digests_called == []
+
+    def test_skip_digests_passes_total_steps_one_to_mirror_check(
+        self, release_preflight, monkeypatch
+    ):
+        # 10-REVIEW.md IN-02: the "[1/N]" progress label must reflect that
+        # only one step will run under --skip-digests, not a hardcoded
+        # "[1/2]" that implies a second step is coming.
+        captured = {}
+
+        def _fake_check(**kw):
+            captured.update(kw)
+            return True
+
+        monkeypatch.setattr(release_preflight, "check_mirror_tag_and_assets", _fake_check)
+        monkeypatch.setattr(release_preflight, "check_digests", lambda: True)
+        release_preflight.main(["--skip-digests"])
+        assert captured.get("total_steps") == 1
+
+    def test_without_skip_digests_passes_total_steps_two_to_mirror_check(
+        self, release_preflight, monkeypatch
+    ):
+        captured = {}
+
+        def _fake_check(**kw):
+            captured.update(kw)
+            return True
+
+        monkeypatch.setattr(release_preflight, "check_mirror_tag_and_assets", _fake_check)
+        monkeypatch.setattr(release_preflight, "check_digests", lambda: True)
+        release_preflight.main([])
+        assert captured.get("total_steps") == 2
 
     def test_both_checks_passing_returns_zero(self, release_preflight, monkeypatch):
         monkeypatch.setattr(
-            release_preflight, "check_mirror_tag_and_assets", lambda: True
+            release_preflight, "check_mirror_tag_and_assets", lambda **kw: True
         )
         monkeypatch.setattr(release_preflight, "check_digests", lambda: True)
         assert release_preflight.main([]) == 0
@@ -264,7 +334,7 @@ class TestReleasePreflightMain:
         self, release_preflight, monkeypatch
     ):
         monkeypatch.setattr(
-            release_preflight, "check_mirror_tag_and_assets", lambda: True
+            release_preflight, "check_mirror_tag_and_assets", lambda **kw: True
         )
         monkeypatch.setattr(release_preflight, "check_digests", lambda: False)
         assert release_preflight.main([]) == 1

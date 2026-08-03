@@ -34,8 +34,11 @@ Usage:
     python3 scripts/release_preflight.py
     python3 scripts/release_preflight.py --skip-digests   # tag/asset check only, fast iteration
 
-Exit status: 0 if both checks pass (or the requested subset does), non-zero
-otherwise.
+Exit status: 0 if both checks pass. 1 if either check fails. 3
+(PARTIAL_EXIT_CODE) if --skip-digests was passed and the mirror check
+passed -- this is deliberately NOT 0 (10-REVIEW.md IN-02): a --skip-digests
+run has not verified the byte-level digest gate, so a wrapper that checks
+only "did this exit zero" must not mistake it for a full PASS.
 """
 from __future__ import annotations
 
@@ -48,12 +51,24 @@ from pathlib import Path
 REPO = "musicalplatypus/tinyml-cli"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# 10-REVIEW.md IN-02: distinct from 0 (full PASS) and 1 (a check failed) --
+# a --skip-digests run has not verified the ~131 MB digest gate, so it must
+# not exit 0 lest a wrapper checking only $? treat it as a full preflight
+# pass.
+PARTIAL_EXIT_CODE = 3
 
-def check_mirror_tag_and_assets() -> bool:
+
+def check_mirror_tag_and_assets(*, total_steps: int = 2) -> bool:
     """Verify the mirror release named by DATASETS_DEFAULT_VERSION exists,
     is tagged exactly as expected, and carries every fetchable dataset's
     asset at a non-zero size. No payload is downloaded — see
     release.yml's `mirror-healthcheck` job, which this mirrors.
+
+    *total_steps* is purely cosmetic (the "[1/N]" progress label): main()
+    passes 1 when --skip-digests means this is the only step that will run,
+    and 2 (the default) otherwise (10-REVIEW.md IN-02 — the label
+    previously always said "[1/2]" even when digests were never going to
+    run in the same invocation).
     """
     try:
         from mmcli.datasets import (
@@ -75,7 +90,7 @@ def check_mirror_tag_and_assets() -> bool:
         entry["filename"] for entry in DATASET_REGISTRY.values() if entry.get("ti_name")
     )
 
-    print(f"[1/2] Checking mirror release '{tag}' in {REPO} ...", file=sys.stderr)
+    print(f"[1/{total_steps}] Checking mirror release '{tag}' in {REPO} ...", file=sys.stderr)
 
     try:
         result = subprocess.run(
@@ -179,12 +194,13 @@ def main(argv: list[str] | None = None) -> int:
              "(fast iteration; do NOT skip this before an actual release build).",
     )
     args = parser.parse_args(argv)
+    total_steps = 1 if args.skip_digests else 2
 
-    tag_ok = check_mirror_tag_and_assets()
+    tag_ok = check_mirror_tag_and_assets(total_steps=total_steps)
     if not tag_ok:
         print(
-            "\nPREFLIGHT FAILED at step 1/2 (mirror tag/assets). Do not proceed to build. "
-            "See docs/RELEASING.md.",
+            f"\nPREFLIGHT FAILED at step 1/{total_steps} (mirror tag/assets). "
+            f"Do not proceed to build. See docs/RELEASING.md.",
             file=sys.stderr,
         )
         return 1
@@ -192,10 +208,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.skip_digests:
         print(
             "\nPREFLIGHT PARTIAL: mirror tag/assets OK, digest gate skipped (--skip-digests). "
+            "This is NOT a full preflight pass -- do not build from a --skip-digests run. "
             "Run without --skip-digests before an actual release build.",
             file=sys.stderr,
         )
-        return 0
+        # 10-REVIEW.md IN-02: a distinct non-zero exit code (not 0) so any
+        # wrapper checking only $? cannot mistake a skipped ~131 MB digest
+        # gate for a full PASS.
+        return PARTIAL_EXIT_CODE
 
     digests_ok = check_digests()
     if not digests_ok:

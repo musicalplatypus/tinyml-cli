@@ -120,6 +120,11 @@ Either check failing means **stop — do not build yet**. Pass `--skip-digests` 
 iteration on the tag/asset check itself; never before an actual release build, since it is
 exactly the check that catches a re-mirror gone wrong.
 
+**Exit status:** `0` means both checks passed — safe to build. `1` means a check actually
+failed. `3` means `--skip-digests` was passed and the mirror check passed — this is
+deliberately **not** `0`: a `--skip-digests` run has not verified the digest gate, so a
+wrapper or CI step that checks only `$?` must not mistake it for a full preflight pass.
+
 **Run for real against this repository's actual state while writing this document** (not merely
 described):
 
