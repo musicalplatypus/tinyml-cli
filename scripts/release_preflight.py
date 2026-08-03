@@ -99,16 +99,33 @@ def check_mirror_tag_and_assets() -> bool:
         )
         return False
 
-    data = json.loads(result.stdout)
-    if data.get("tagName") != tag:
+    try:
+        data = json.loads(result.stdout)
+        tag_name = data.get("tagName")
+    except (ValueError, TypeError, AttributeError) as exc:
         print(
-            f"FATAL: gh reported tagName {data.get('tagName')!r}, expected {tag!r} — "
+            f"FATAL: could not parse `gh release view` JSON output for "
+            f"'{tag}': {exc}. Raw output: {result.stdout[:200]!r}",
+            file=sys.stderr,
+        )
+        return False
+    if tag_name != tag:
+        print(
+            f"FATAL: gh reported tagName {tag_name!r}, expected {tag!r} — "
             f"the mirror release appears mis-tagged",
             file=sys.stderr,
         )
         return False
 
-    assets = {a["name"]: a.get("size", 0) for a in data.get("assets", [])}
+    try:
+        assets = {a["name"]: a.get("size", 0) for a in data.get("assets", [])}
+    except (TypeError, KeyError) as exc:
+        print(
+            f"FATAL: could not parse asset list from `gh release view` "
+            f"output for '{tag}': {exc}. Raw output: {result.stdout[:200]!r}",
+            file=sys.stderr,
+        )
+        return False
     missing = [name for name in expected if name not in assets]
     if missing:
         print(

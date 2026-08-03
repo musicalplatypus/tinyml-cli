@@ -126,6 +126,63 @@ class TestCheckMirrorTagAndAssets:
         monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
         assert release_preflight.check_mirror_tag_and_assets() is True
 
+    def test_gh_non_json_stdout_fails_closed_with_fatal_message(
+        self, release_preflight, capsys, monkeypatch
+    ):
+        # 10-REVIEW.md IN-03: json.loads(result.stdout) previously raised an
+        # unguarded JSONDecodeError on non-JSON `gh` output.
+        fake = mock.Mock(returncode=0, stdout="not json at all {{{", stderr="")
+        monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
+        result = release_preflight.check_mirror_tag_and_assets()
+        assert result is False
+        err = capsys.readouterr().err
+        assert "FATAL:" in err
+        assert "not json at all" in err
+
+    def test_gh_non_object_json_stdout_fails_closed_with_fatal_message(
+        self, release_preflight, capsys, monkeypatch
+    ):
+        # Valid JSON, but not the expected object shape (e.g. a bare list) --
+        # data.get("tagName") would raise AttributeError unguarded.
+        fake = mock.Mock(returncode=0, stdout=json.dumps([1, 2, 3]), stderr="")
+        monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
+        result = release_preflight.check_mirror_tag_and_assets()
+        assert result is False
+        assert "FATAL:" in capsys.readouterr().err
+
+    def test_gh_null_assets_fails_closed_with_fatal_message(
+        self, release_preflight, capsys, monkeypatch
+    ):
+        # 10-REVIEW.md IN-03: `"assets": null` makes data.get("assets", [])
+        # return None (the key is present), and iterating None in the dict
+        # comprehension previously raised an unguarded TypeError.
+        tag = _mirror_tag()
+        fake = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"tagName": tag, "assets": None}),
+            stderr="",
+        )
+        monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
+        result = release_preflight.check_mirror_tag_and_assets()
+        assert result is False
+        assert "FATAL:" in capsys.readouterr().err
+
+    def test_gh_asset_missing_name_key_fails_closed_with_fatal_message(
+        self, release_preflight, capsys, monkeypatch
+    ):
+        # 10-REVIEW.md IN-03: an asset object without "name" previously
+        # raised an unguarded KeyError building the assets dict.
+        tag = _mirror_tag()
+        fake = mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"tagName": tag, "assets": [{"size": 100}]}),
+            stderr="",
+        )
+        monkeypatch.setattr(release_preflight.subprocess, "run", lambda *a, **k: fake)
+        result = release_preflight.check_mirror_tag_and_assets()
+        assert result is False
+        assert "FATAL:" in capsys.readouterr().err
+
 
 class TestCheckDigests:
     def test_missing_script_fails_closed_with_fatal_message(
