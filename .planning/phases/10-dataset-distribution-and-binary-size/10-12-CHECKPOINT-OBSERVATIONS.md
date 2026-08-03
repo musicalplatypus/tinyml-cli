@@ -147,3 +147,44 @@ agent's own removal) — remove it again before re-testing check 1/2/3/4.
 - Cache was left whole: 9 mirrored datasets cached, same as before the session.
 - A project named `asdasdasdasda` exists in the project list from the user's earlier manual
   Create-button test; it was not created by this checkpoint.
+
+## Re-verification of the fix (agent-driven, computer-use) — STILL FAILING
+
+Driven 2026-08-03 13:54-14:00 against `PlatypusStudio.app`.
+
+**Result: defect 1 is NOT fixed.** The label held `Zero KB of 56.6 MB` across four consecutive
+one-second samples during a live 56.6 MB transfer. Same as before the fix.
+
+### First attempt was invalid — stale artifact, third time this session
+The first re-test ran against an `.app` built at 13:49:34 while the fix committed at 13:51:37.
+The bundle predated the fix. Rebuilt (`make-app.sh`, 13:56:49 — `swift build` reported 0.09s,
+i.e. the compiled product already contained the fix and only the bundle copy was stale),
+relaunched, and re-tested. **Still frozen.** So the failure is real, not an artifact problem.
+
+### Correction to the earlier diagnosis in this file
+The claim above that "`Zero KB of 56.6 MB` proves the `start` event WAS ingested" is WRONG and
+should not be relied on. `NewProjectSheet.swift:139-140` composes the label as
+`formatBytes(transfer.bytesTransferred) of formatBytes(bytes)`, where `bytes` is bound from the
+`.downloadable(let bytes)` availability case — NOT from the event stream. The 56.6 MB therefore
+proves nothing about ingestion. Both readings remain open: events may be arriving and not
+rendering, or not arriving at all.
+
+### What has now been RULED OUT as the cause
+- Producer: NDJSON is emitted correctly and is stderr-only — `2>&1 >/dev/null | grep -c '^{'`
+  yields events, `2>/dev/null` yields 0. Events stream ~90 ms apart, flushed.
+- Pipe tagging: `ProcessRunner.swift:130-131` assigns `OutputLine.stdout` to `outPipe` and
+  `OutputLine.stderr` to `errPipe` correctly, so `line.isStderr` should be true for these lines.
+- Streaming: `AsyncStream` + blocking `availableData` on a dedicated drain thread, not
+  `readDataToEndOfFile`.
+- Actor isolation: `@MainActor` now applied to both view structs (`0e9bca0`) — did not help.
+- Stale binaries: app-support mmcli is byte-identical to `dist/mmcli` (sha256 `fc3804fd…`),
+  and the `.app` has been rebuilt after the fix.
+
+### Recommended next step
+This needs instrumentation rather than another hypothesis: log each line the app receives from
+`proc.lines` (text + `isStderr`) to a file during a real download, and confirm whether the
+`progress` events arrive at all. That single observation separates "not arriving" from
+"arriving but not rendering" and ends the guessing.
+
+Checks 2, 3, 4, 8 were NOT re-run after the fix and must not be assumed to still hold.
+Checks 5, 6, 7 remain unrun.
