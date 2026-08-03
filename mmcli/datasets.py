@@ -383,7 +383,22 @@ def _resolve_dataset_zip(name: str) -> str | None:
     cache_path = os.path.join(_cache_dir_path(version), filename)
     if os.path.isfile(cache_path):
         expected = meta.get("sha256")
-        if expected and _sha256_of(cache_path) == expected:
+        if not expected:
+            # 10-REVIEW.md IN-04: an entry with no recorded sha256 (legal
+            # for a non-`ti_name` local entry -- `_validate_registry` only
+            # requires sha256 for `ti_name` entries) cannot be verified one
+            # way or the other. Reporting it as a "does not match" mismatch
+            # is false (nothing was compared) and its suggested remedy,
+            # `--force` redownload, fails for an entry with no fetchable
+            # URL. Treat it as an unverifiable cache hit -- absent, not
+            # mismatched.
+            print(
+                f"WARNING: cached copy of '{name}' at {cache_path} has no "
+                f"recorded sha256 to verify against; treating it as absent.",
+                file=sys.stderr,
+            )
+            return None
+        if _sha256_of(cache_path) == expected:
             return cache_path
         print(
             f"WARNING: cached copy of '{name}' at {cache_path} does not "

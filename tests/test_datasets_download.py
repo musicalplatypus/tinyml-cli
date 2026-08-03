@@ -427,6 +427,34 @@ class TestResolutionOrder:
     def test_unknown_name_returns_none(self, isolated_cache):
         assert _resolve_dataset_zip("nonexistent_dataset_xyz") is None
 
+    def test_cache_hit_with_no_sha256_reported_as_unverifiable_not_mismatch(
+        self, isolated_cache, monkeypatch, capsys
+    ):
+        # 10-REVIEW.md IN-04: an entry with no recorded sha256 (legal for a
+        # non-ti_name local entry) hitting the cache used to fall into the
+        # "does not match the recorded sha256" branch -- false (nothing was
+        # compared) and its suggested `--force` remedy fails for an entry
+        # with no fetchable URL. The wording must say "no ... sha256", not
+        # "does not match".
+        name = "_test_only_no_sha256"
+        monkeypatch.setitem(DATASET_REGISTRY, name, {
+            "filename": "_test_only_no_sha256.zip",
+            "task_types": ["generic_timeseries_classification"],
+            "module": "timeseries",
+            "description": "no-sha256 local entry regression fixture",
+        })
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        cache_path = os.path.join(cache_dir, "_test_only_no_sha256.zip")
+        with open(cache_path, "wb") as f:
+            f.write(b"unverifiable payload, no sha256 recorded to check it against")
+
+        resolved = _resolve_dataset_zip(name)
+        assert resolved is None
+        err = capsys.readouterr().err.lower()
+        assert "no" in err and "sha256" in err
+        assert "does not" not in err
+        assert "--force" not in err
+
     def test_extract_dataset_still_works_when_zip_present_locally(self, isolated_cache):
         # REQ: mmcli init --dataset X behaves identically to before this
         # plan when the zip is already present via MMCLI_DATASETS/bundled.
