@@ -107,6 +107,38 @@ Checks 5, 6 and 7 were not exercised. Check 5 (library progress) is expected to 
 defect since both surfaces consume the same stream; 6 (bulk Cancel All) and 7 (integrity repair
 in the GUI) remain genuinely unverified and should not be recorded as passing.
 
+## Post-failure fix (continuation agent, same session)
+
+Both defects from check 1 (frozen byte counter) and the post-transfer flicker were fixed in
+PlatypusStudio commit `0e9bca0`:
+- `NewProjectSheet` and `DatasetLibraryView` are now `@MainActor`-isolated, matching this
+  codebase's existing convention (`WorkspaceStore`, `ProjectSession`, `PlatypusStudioApp`,
+  `RunExecutor`). Root cause confirmed via `View`'s actor-isolation inference (SE-0338): only
+  the protocol requirement `body` is inferred `@MainActor`; `download(_:)` / `downloadOne(_:)`
+  were `nonisolated`, so `for await line in proc.lines { transfer.ingest(...) }` mutated
+  `@State` off the main actor and SwiftUI did not publish the intermediate updates.
+- `NewProjectSheet.datasetAvailabilityRow` now checks `completedThisSession[d.name]` before
+  the availability switch, so the confirmation renders the instant it is set rather than
+  depending on `refreshAvailability()` having already landed.
+- `DatasetLibraryView.downloadOne(_:)` no longer clears `activeDownloadName` until after
+  `refresh()` resolves on the success path, closing the equivalent flicker there.
+
+`swift build` and `swift test` both pass (180/180, suite unchanged) after the fix.
+
+**This fix is NOT self-verified against the running app.** The agent that made this fix had no
+GUI-driving tool available in its session (no computer-use MCP tools were exposed, and
+`osascript`/System Events UI scripting failed with "not allowed assistive access" — this
+Terminal has no Accessibility permission grant). Per the task's own instructions, this is
+disclosed rather than papered over: **checks 1, 2, 3, 4, 5, 6, 7, 8 all still need a fresh
+human-or-computer-use-driven pass** against `PlatypusStudio.app` (rebuilt at
+`dist/PlatypusStudio.app`, ad-hoc signed) with the refreshed
+`~/Library/Application Support/PlatypusStudio/bin/mmcli` (sha256 `fc3804fd…`, verified
+byte-identical to `tinyml-cli/dist/mmcli`, confirmed to list `--progress-json`).
+
+The app was left running (already built with the fix) for convenience. The dataset cache was
+restored to its original 9-mirrored-datasets state (`fan_blade_fault` re-pulled after this
+agent's own removal) — remove it again before re-testing check 1/2/3/4.
+
 ## Agent interference disclosed
 
 - The agent's own CLI test (`… --progress-json | head -20`) SIGPIPE'd a transfer, leaving
