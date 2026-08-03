@@ -121,7 +121,15 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: Test (${{ matrix.os }})
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    # 10-REVIEW.md WR-14: unlike test-cli.yml (PR iteration, where tolerating
+    # known Windows flakiness is the point), `continue-on-error` here marks
+    # the job successful for `build`'s `needs: [test, ...]` purposes even on
+    # a fully red Windows matrix — including
+    # test_build_config.py's EXPECTED_ADD_DATA_SEPARATOR guard, which exists
+    # specifically because "PyInstaller accepts a wrong --add-data separator
+    # ... producing a binary with an empty bundle and a successful build."
+    # That guard runs in this same job. A release build must not proceed on
+    # a red Windows matrix.
 
     defaults:
       run:

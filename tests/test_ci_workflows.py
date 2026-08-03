@@ -138,6 +138,32 @@ def test_deselection_is_still_intact_in_both_workflows():
         )
 
 
+def test_release_workflow_does_not_tolerate_windows_test_failures():
+    """10-REVIEW.md WR-14: release.yml's `test` job must not carry
+    `continue-on-error` for the Windows matrix leg — that marks the job
+    successful for `build`'s `needs: [test, ...]` purposes even on a fully
+    red Windows run, including test_build_config.py's
+    EXPECTED_ADD_DATA_SEPARATOR guard (which exists specifically because a
+    wrong --add-data separator on Windows produces a binary with an empty
+    bundle and a successful build) — the one guard whose whole point is to
+    fail a Windows build, running in a job whose Windows result would
+    otherwise be discarded. test-cli.yml (PR iteration) is intentionally
+    unaffected: tolerating known Windows flakiness on PRs is a legitimate,
+    separate call from whether a release build should proceed on red.
+    """
+    text = _read(RELEASE_WORKFLOW)
+    # Strip full-line YAML comments so this assertion checks the actual
+    # workflow directive, not this test's own explanatory comment above it
+    # in release.yml (which necessarily names the key it's guarding against).
+    code = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("#")
+    )
+    assert "continue-on-error" not in code, (
+        f"{RELEASE_WORKFLOW.name} must not tolerate any job failure — a "
+        f"release build must not proceed on a red test matrix"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 10-REVIEW.md WR-02: scripts/release_preflight.py's mirror check and
 # release.yml's `mirror-healthcheck` job's embedded python are a verbatim
