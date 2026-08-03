@@ -75,7 +75,14 @@ def _dataset_zips_present(monkeypatch, request, tmp_path_factory):
     # counts. Overriding them for a stand-in would make it assert against the
     # stand-in and pass vacuously — it needs the real values, and it reads no
     # zip, so it opts out entirely.
-    if request.cls is not None and request.cls.__name__ == "TestRegistryInvariants":
+    #
+    # 10-REVIEW.md WR-07: opt out via an explicit marker on the class, not a
+    # class-name string comparison here. A rename or a test split that moved
+    # a sha256/bytes assertion into a differently-named class would silently
+    # stop opting out under the string-match approach, leaving
+    # REQ-DATA-02's invariant unguarded without any test failure to notice —
+    # a marker travels with the class through a rename.
+    if request.node.get_closest_marker("no_dataset_standins") is not None:
         yield
         return
     bundled = _os.path.join(_os.path.dirname(datasets.__file__), "example_datasets")
@@ -199,6 +206,7 @@ def fake_ti_entry(monkeypatch):
 # Task 1 — registry invariants and dataset_url()
 # ---------------------------------------------------------------------------
 
+@pytest.mark.no_dataset_standins
 class TestRegistryInvariants:
     def test_nine_entries_have_ti_name(self):
         with_ti_name = [n for n, m in DATASET_REGISTRY.items() if m.get("ti_name")]

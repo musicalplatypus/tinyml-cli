@@ -46,6 +46,7 @@ mmcli = ["example_datasets/generic_audio_classification.zip", "data/*.yaml"]
 markers = [
     "cli: Tier 4 CLI integration tests",
     "e2e: Full end-to-end pipeline tests (slow, requires MMCLI_PYTHON + TVM)",
+    "no_dataset_standins: opts a test class out of tests/test_datasets_download.py's stand-in dataset zip fixture (10-REVIEW.md WR-07)",
 ]
 
 [project.optional-dependencies]
