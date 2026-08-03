@@ -35,6 +35,8 @@ import mmcli.datasets as datasets
 from mmcli.datasets import (
     DATASET_REGISTRY,
     DATASETS_DEFAULT_VERSION,
+    FETCH_OUTCOMES,
+    FetchResult,
     _cache_dir,
     _download_to_cache,
     _resolve_dataset_zip,
@@ -43,6 +45,7 @@ from mmcli.datasets import (
     dataset_url,
     extract_dataset,
     fetch_dataset,
+    fetch_dataset_detailed,
 )
 
 
@@ -997,7 +1000,7 @@ class TestFetchDatasetPolicy:
 
         calls = []
 
-        def fake_download(url, cdir, filename, sha256, nbytes, dsname):
+        def fake_download(url, cdir, filename, sha256, nbytes, dsname, *, on_event=None):
             calls.append(dsname)
             return dest
 
@@ -1031,7 +1034,7 @@ class TestFetchDatasetPolicy:
 
         calls = []
 
-        def fake_download(url, cdir, filename, sha256, nbytes, dsname):
+        def fake_download(url, cdir, filename, sha256, nbytes, dsname, *, on_event=None):
             calls.append(dsname)
             return dest
 
@@ -1080,6 +1083,357 @@ class TestFetchDatasetMmcliDatasetsOverridesForce:
         )
         with pytest.raises(RuntimeError, match="MMCLI_DATASETS"):
             fetch_dataset(fake_ti_entry["name"], force=True)
+
+
+# ---------------------------------------------------------------------------
+# 10-11-PLAN.md Task 1 — fetch_dataset_detailed() outcome reporting (Gap 1)
+# ---------------------------------------------------------------------------
+
+def _redirect_download_to_http_server(monkeypatch, base_url):
+    """Let `fetch_dataset_detailed` reach the local `http_server` fixture
+    without weakening the HTTPS-only gate it enforces on `dataset_url(name)`.
+
+    `dataset_url` for a `ti_name` entry always composes a real
+    ``https://github.com/...`` URL, which fetch_dataset_detailed's HTTPS
+    check correctly accepts but which is obviously unreachable in a test.
+    Rather than monkeypatching `dataset_url` (which would silently bypass
+    the HTTPS gate this same file tests elsewhere in `TestFetchDatasetPolicy
+    .test_non_https_url_refused_before_any_request`), wrap the REAL
+    `_download_to_cache` so it is still called — with the same cache_dir,
+    filename, sha256, bytes and name — just against the local test server's
+    host instead of the composed (real, unreachable) URL. This keeps the
+    fetch_dataset_detailed() call under test exercising its actual HTTPS
+    gate and its actual downloader, matching this file's documented
+    testability pattern (see module docstring).
+    """
+    real_download = datasets._download_to_cache
+
+    def _redirected(url, cache_dir, filename, sha256, nbytes, name, *, on_event=None):
+        return real_download(
+            f"{base_url}/{filename}", cache_dir, filename, sha256, nbytes, name,
+            on_event=on_event,
+        )
+
+    monkeypatch.setattr(datasets, "_download_to_cache", _redirected)
+
+
+class TestFetchOutcomes:
+    """`fetch_dataset_detailed` must report which of the four FETCH_OUTCOMES
+    literals produced its result, and a corrupted cache entry must be
+    reported loudly (WARNING naming both digests) rather than silently
+    repaired — see 10-UAT.md Gap 1 / T-10-11-01.
+    """
+
+    def test_no_cache_entry_yields_downloaded(self, isolated_cache, http_server, fake_ti_entry, monkeypatch):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+
+        _redirect_download_to_http_server(monkeypatch, base_url)
+        result = fetch_dataset_detailed(name)
+
+        assert isinstance(result, FetchResult)
+        assert result.outcome == "downloaded"
+        assert _sha256_of(result.path) == meta["sha256"]
+
+    def test_matching_cache_entry_yields_cache_hit_zero_requests(
+        self, isolated_cache, http_server, fake_ti_entry
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        with open(dest, "wb") as f:
+            f.write(fake_ti_entry["body"])  # already correct
+
+        base_url, handler = http_server
+        # No route registered for this dataset: any request would 404 and
+        # the test would fail via the RuntimeError, but we assert the
+        # request log directly for an explicit "zero requests" guarantee.
+
+        result = fetch_dataset_detailed(name)
+        assert result == FetchResult(dest, "cache-hit")
+        assert handler.request_log == []
+
+    def test_corrupted_cache_entry_yields_integrity_repair_with_warning(
+        self, isolated_cache, http_server, fake_ti_entry, capsys, monkeypatch
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        with open(dest, "wb") as f:
+            f.write(b"corrupted bytes that do not match the recorded sha256")
+        corrupted_digest = _sha256_of(dest)
+
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+
+        _redirect_download_to_http_server(monkeypatch, base_url)
+        result = fetch_dataset_detailed(name)
+
+        assert result.outcome == "integrity-repair"
+        assert result.path == dest
+        assert _sha256_of(dest) == meta["sha256"], (
+            "the repaired file on disk must match the registry digest again"
+        )
+
+        err = capsys.readouterr().err
+        assert "WARNING" in err
+        assert meta["sha256"] in err, "expected digest must be named"
+        assert corrupted_digest in err, "actual (bad) digest must be named"
+
+    def test_force_over_matching_entry_yields_forced_redownload(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        with open(dest, "wb") as f:
+            f.write(fake_ti_entry["body"])  # already correct
+
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+
+        _redirect_download_to_http_server(monkeypatch, base_url)
+        result = fetch_dataset_detailed(name, force=True)
+
+        assert result.outcome == "forced-redownload"
+        assert len(handler.request_log) >= 1, "force=True must issue a request"
+
+    def test_force_with_no_pre_existing_entry_yields_downloaded_not_forced(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+
+        _redirect_download_to_http_server(monkeypatch, base_url)
+        result = fetch_dataset_detailed(name, force=True)
+
+        assert result.outcome == "downloaded"
+
+    def test_fetch_dataset_str_wrapper_unaffected_by_all_four_outcomes(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        # fetch_dataset() (the pre-existing str-returning function) must keep
+        # returning a plain str for every outcome — existing callers
+        # (scripts/verify_dataset_digests.py, cli.py's init auto-fetch path,
+        # and the 59 pre-existing tests in this file) must be unaffected.
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+
+        _redirect_download_to_http_server(monkeypatch, base_url)
+        result = fetch_dataset(name)  # no cache entry -> downloaded
+        assert isinstance(result, str)
+        assert result == dest
+
+        result2 = fetch_dataset(name)  # cache-hit
+        assert isinstance(result2, str)
+        assert result2 == dest
+
+    def test_fetch_outcomes_frozenset_has_exactly_four_literals(self):
+        assert FETCH_OUTCOMES == frozenset(
+            {"cache-hit", "downloaded", "forced-redownload", "integrity-repair"}
+        )
+
+
+# ---------------------------------------------------------------------------
+# 10-11-PLAN.md Task 2 — the opt-in --progress-json event stream
+# ---------------------------------------------------------------------------
+
+class TestProgressEvents:
+    """`fetch_dataset_detailed(on_event=...)` must emit the exact NDJSON
+    event *structure* (as dicts — datasets.py never serializes; that is
+    cli.py's job) documented in the plan's cross-repo contract: every event
+    carries "v":1 and "dataset"; integrity-repair precedes start; at most
+    one start; progress only follows start; result is last and only on
+    success; and no event ever carries a path, URL or hostname.
+    """
+
+    def test_downloaded_emits_start_progress_result_no_integrity_repair(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+        _redirect_download_to_http_server(monkeypatch, base_url)
+
+        events = []
+        result = fetch_dataset_detailed(name, on_event=events.append)
+
+        assert result.outcome == "downloaded"
+        kinds = [e["event"] for e in events]
+        assert "integrity-repair" not in kinds
+        assert kinds.count("start") == 1
+        assert kinds[0] == "start", "start must be the first event"
+        assert kinds[-1] == "result", "result must be the last event"
+        assert kinds.count("result") == 1
+        # progress only ever follows start
+        start_index = kinds.index("start")
+        for i, kind in enumerate(kinds):
+            if kind == "progress":
+                assert i > start_index
+
+        for ev in events:
+            assert ev["v"] == 1
+            assert ev["dataset"] == name
+
+        result_event = events[-1]
+        assert result_event["outcome"] == "downloaded"
+        assert result_event["total_bytes"] == meta["bytes"]
+
+        progress_events = [e for e in events if e["event"] == "progress"]
+        assert progress_events, "at least one progress event expected"
+        byte_counts = [e["bytes"] for e in progress_events]
+        assert byte_counts == sorted(byte_counts), "bytes must be non-decreasing"
+        assert byte_counts[-1] == meta["bytes"], "final progress must reach total_bytes"
+        for e in progress_events:
+            assert e["total_bytes"] == meta["bytes"]
+
+    def test_cache_hit_emits_only_result_no_start_no_progress(
+        self, isolated_cache, http_server, fake_ti_entry
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        with open(dest, "wb") as f:
+            f.write(fake_ti_entry["body"])  # already correct
+
+        events = []
+        result = fetch_dataset_detailed(name, on_event=events.append)
+
+        assert result.outcome == "cache-hit"
+        assert len(events) == 1
+        assert events[0] == {
+            "v": 1, "event": "result", "dataset": name,
+            "outcome": "cache-hit", "total_bytes": meta["bytes"],
+        }
+
+    def test_corrupted_cache_entry_emits_integrity_repair_before_start(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        with open(dest, "wb") as f:
+            f.write(b"corrupted, does not match the recorded sha256 at all")
+
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+        _redirect_download_to_http_server(monkeypatch, base_url)
+
+        events = []
+        result = fetch_dataset_detailed(name, on_event=events.append)
+
+        assert result.outcome == "integrity-repair"
+        kinds = [e["event"] for e in events]
+        assert kinds[0] == "integrity-repair"
+        assert kinds.index("start") == 1, "start must immediately follow integrity-repair"
+        assert kinds[-1] == "result"
+        assert events[-1]["outcome"] == "integrity-repair"
+        assert events[0]["total_bytes"] == meta["bytes"]
+
+    def test_failed_transfer_emits_no_result(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        base_url, handler = http_server
+        # Serve the wrong body -> checksum mismatch -> RuntimeError, no result.
+        handler.routes[f"/{meta['filename']}"] = {"body": b"wrong bytes entirely"}
+        _redirect_download_to_http_server(monkeypatch, base_url)
+
+        events = []
+        with pytest.raises(RuntimeError, match="Checksum mismatch"):
+            fetch_dataset_detailed(name, on_event=events.append)
+
+        kinds = [e["event"] for e in events]
+        assert "result" not in kinds, "a failed transfer must not emit result"
+
+    def test_progress_events_carry_no_path_url_or_hostname(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        base_url, handler = http_server
+        host = base_url.split("://", 1)[1]  # "127.0.0.1:<port>"
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+        _redirect_download_to_http_server(monkeypatch, base_url)
+
+        events = []
+        fetch_dataset_detailed(name, on_event=events.append)
+
+        import json as _json
+        dumped = _json.dumps(events)
+        assert "/" not in dumped, dumped
+        assert "https" not in dumped, dumped
+        assert host not in dumped, dumped
+        assert host.split(":")[0] not in dumped, dumped
+
+    def test_progress_throttled_not_one_event_per_chunk(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        # A large-ish body at the default 64 KiB read size would emit many
+        # chunks; the throttle (200ms / 1MiB) must collapse them to a small
+        # number of progress events, not one per chunk.
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        big_body = b"x" * (3 * 1024 * 1024)  # 3 MiB -> ~48 chunks at 64 KiB
+        big_sha256 = hashlib.sha256(big_body).hexdigest()
+        monkeypatch.setitem(DATASET_REGISTRY[name], "bytes", len(big_body))
+        monkeypatch.setitem(DATASET_REGISTRY[name], "sha256", big_sha256)
+
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": big_body}
+        _redirect_download_to_http_server(monkeypatch, base_url)
+
+        events = []
+        fetch_dataset_detailed(name, on_event=events.append)
+
+        progress_events = [e for e in events if e["event"] == "progress"]
+        # ~48 chunks of 64 KiB each; 1 MiB throttle means at most ~3-4
+        # mid-stream emissions plus the guaranteed first and final ones.
+        assert 1 <= len(progress_events) < 20, (
+            f"expected throttling to collapse ~48 chunks to a handful of "
+            f"events, got {len(progress_events)}"
+        )
+        assert progress_events[-1]["bytes"] == len(big_body)
+
+    def test_on_event_suppresses_tqdm_bar_even_on_a_tty(
+        self, isolated_cache, http_server, fake_ti_entry, monkeypatch
+    ):
+        # 10-11-PLAN.md Task 2: `show_progress` must require `on_event is
+        # None`, not merely `stderr_is_tty()` -- two progress renderers
+        # interleaved on one stream produces garbage for both. Force
+        # stderr_is_tty() True (simulating a real terminal) while also
+        # passing on_event, and assert tqdm is never instantiated.
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        base_url, handler = http_server
+        handler.routes[f"/{meta['filename']}"] = {"body": fake_ti_entry["body"]}
+        _redirect_download_to_http_server(monkeypatch, base_url)
+        monkeypatch.setattr(datasets, "stderr_is_tty", lambda: True)
+
+        monkeypatch.setattr(
+            datasets, "tqdm",
+            lambda *a, **k: pytest.fail(
+                "tqdm must not be instantiated when on_event is given"
+            ),
+        )
+
+        result = fetch_dataset_detailed(name, on_event=lambda ev: None)
+        assert result.outcome == "downloaded"
 
 
 class TestStderrIsTty:

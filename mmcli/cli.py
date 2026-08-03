@@ -1033,7 +1033,8 @@ def _add_datasets_parser(subparsers) -> None:
             "MMCLI_DATASETS is set (REQ-DATA-03).\n\n"
             "Example:\n"
             "  mmcli datasets pull fan_blade_fault\n"
-            "  mmcli datasets pull fan_blade_fault --force"
+            "  mmcli datasets pull fan_blade_fault --force\n"
+            "  mmcli datasets pull fan_blade_fault --progress-json"
         ),
     )
     pull_p.add_argument(
@@ -1046,6 +1047,16 @@ def _add_datasets_parser(subparsers) -> None:
         action="store_true",
         default=False,
         help="Re-download and re-verify even if a valid copy is already cached.",
+    )
+    pull_p.add_argument(
+        "--progress-json",
+        action="store_true",
+        default=False,
+        help=(
+            "Emit machine-readable newline-delimited JSON transfer progress "
+            "on stderr. Intended for tools driving mmcli; unaffected by "
+            "whether stderr is a terminal."
+        ),
     )
 
     path_p = sub.add_parser(
@@ -1588,8 +1599,28 @@ def _handle_datasets_list(args: argparse.Namespace) -> None:
           f"'mmcli datasets path <name>' locates on disk.\n")
 
 
+# Outcome-specific `datasets pull` success lines (10-11-PLAN.md Task 1 — Gap
+# 1). Every line keeps the literal substring "available at:" —
+# tests/test_datasets_cli.py:447 asserts on it — so the four lines stay
+# mutually distinguishable while a single fixed substring still identifies
+# the *fact* of success across all four.
+_PULL_OUTCOME_LINES = {
+    "cache-hit": "✓ '{name}' already cached (sha256 verified), available at: {path}",
+    "downloaded": "✓ '{name}' downloaded and verified, available at: {path}",
+    "forced-redownload": (
+        "✓ '{name}' re-downloaded (--force) and verified, available at: {path}"
+    ),
+    "integrity-repair": (
+        "✓ '{name}' REPAIRED — the cached copy failed its sha256 check and "
+        "was re-downloaded and verified, available at: {path}"
+    ),
+}
+
+
 def _handle_datasets_pull(args: argparse.Namespace) -> None:
-    from mmcli.datasets import DATASET_REGISTRY, fetch_dataset
+    import json
+
+    from mmcli.datasets import DATASET_REGISTRY, fetch_dataset_detailed
 
     name = args.dataset_name
     if name not in DATASET_REGISTRY:
@@ -1601,13 +1632,29 @@ def _handle_datasets_pull(args: argparse.Namespace) -> None:
         )
         sys.exit(2)
 
+    on_event = None
+    if getattr(args, "progress_json", False):
+        # 10-11-PLAN.md Task 2: encoding is this module's job, not
+        # datasets.py's — datasets.py builds plain dicts, we serialize them.
+        # flush=True is load-bearing: a block-buffered pipe would otherwise
+        # deliver the whole stream at process exit and a GUI's progress bar
+        # would jump 0 -> 100 instead of animating.
+        on_event = lambda ev: print(  # noqa: E731
+            json.dumps(ev, separators=(",", ":")), file=sys.stderr, flush=True
+        )
+
     try:
-        path = fetch_dataset(name, force=args.force)
+        result = fetch_dataset_detailed(name, force=args.force, on_event=on_event)
     except (KeyError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"✓ '{name}' available at: {path}")
+    # 10-11-PLAN.md Task 1: an integrity repair still exits 0 here. The
+    # repair succeeded — the bad bytes were discarded and the file on disk
+    # now matches its registry sha256 — so a non-zero exit would break every
+    # script that pulls datasets and would be a worse lie than the silence
+    # it replaces (see FETCH_OUTCOMES / T-10-11-06). Do not "fix" this.
+    print(_PULL_OUTCOME_LINES[result.outcome].format(name=name, path=result.path))
 
 
 def _handle_datasets_path(args: argparse.Namespace) -> None:

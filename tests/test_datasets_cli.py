@@ -232,7 +232,7 @@ def _install_fake_successful_download(monkeypatch):
     `_download_to_cache` would have written to. Same technique 10-02's suite
     uses in `test_force_flag_bypasses_fetch_dataset_cache_short_circuit`.
     """
-    def _fake_download(url, cache_dir, filename, sha256, nbytes, name):
+    def _fake_download(url, cache_dir, filename, sha256, nbytes, name, *, on_event=None):
         src = os.path.join(_REAL_BUNDLED_DIR, filename)
         dest = os.path.join(cache_dir, filename)
         shutil.copyfile(src, dest)
@@ -455,19 +455,25 @@ class TestDatasetsPull:
         assert "no upstream source" in err
 
     def test_pull_force_flag_forwarded_to_fetch_dataset(self, monkeypatch, capsys):
+        # 10-11-PLAN.md Task 1: _handle_datasets_pull calls
+        # fetch_dataset_detailed (not the fetch_dataset str-wrapper) so it can
+        # see the outcome. Monkeypatch that function instead.
         calls = {}
 
-        def fake_fetch_dataset(name, *, force=False):
+        def fake_fetch_dataset_detailed(name, *, force=False, on_event=None):
             calls["name"] = name
             calls["force"] = force
-            return "/fake/path"
+            return datasets_mod.FetchResult("/fake/path", "forced-redownload")
 
-        monkeypatch.setattr(datasets_mod, "fetch_dataset", fake_fetch_dataset)
+        monkeypatch.setattr(
+            datasets_mod, "fetch_dataset_detailed", fake_fetch_dataset_detailed
+        )
         code, out, err = _run(
             monkeypatch, capsys, ["datasets", "pull", _SMALL_TI_DATASET, "--force"]
         )
         assert code == 0, err
         assert calls == {"name": _SMALL_TI_DATASET, "force": True}
+        assert "available at" in out
 
     def test_pull_out_of_space_yields_legible_error_not_traceback(
         self, hide_bundled, isolated_cache, monkeypatch, capsys
@@ -1029,3 +1035,199 @@ class TestCacheInspectionHasNoSideEffects:
             "_resolve_dataset_zip created the cache directory while answering "
             "a read-only resolution question"
         )
+
+
+# ---------------------------------------------------------------------------
+# 10-11-PLAN.md Task 1 — the integrity-repair fix, proven through the REAL
+# CLI entry point (10-UAT.md Gap 1)
+# ---------------------------------------------------------------------------
+
+@_needs_real_zips
+class TestDatasetsPullIntegrityRepairSubprocess:
+    """Drives the real CLI entry point in a subprocess — `[sys.executable,
+    "-m", "mmcli", "datasets", "pull", ...]`, following the pattern at
+    `TestCacheInspectionHasNoSideEffects` above — rather than the in-process
+    `_run` helper. This is the test that proves the fix reaches a user: the
+    in-process tests only prove the handler function works.
+
+    Fetches a real, small dataset (`generic_timeseries_forecasting`, ~71 KB)
+    from the real GitHub release mirror. There is no way to redirect the
+    downloader to a local test server from inside a subprocess — a fresh
+    process re-imports `mmcli.datasets` with no in-process monkeypatching
+    applied — so this genuinely exercises the network path, unlike every
+    other test in this file. Skipped (via `_needs_real_zips`) on a checkout
+    without the real dataset zips, same as the other subprocess tests that
+    need a genuinely digest-matching source.
+    """
+
+    def test_corrupted_cache_entry_prints_warning_and_repaired_line_exit_0(
+        self, tmp_path
+    ):
+        name = "generic_timeseries_forecasting"
+        meta = DATASET_REGISTRY[name]
+
+        env = dict(os.environ, XDG_CACHE_HOME=str(tmp_path))
+        env.pop("MMCLI_DATASETS", None)
+        env.pop("MMCLI_AUTO_FETCH", None)
+
+        cache_dir = tmp_path / "mmcli" / "datasets" / DATASETS_DEFAULT_VERSION
+        cache_dir.mkdir(parents=True)
+        corrupted_path = cache_dir / meta["filename"]
+        corrupted_path.write_bytes(
+            b"deliberately corrupted cache entry, does not match the "
+            b"recorded sha256 at all"
+        )
+        corrupted_digest = hashlib.sha256(corrupted_path.read_bytes()).hexdigest()
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "datasets", "pull", name],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+            timeout=60,
+        )
+
+        assert proc.returncode == 0, (
+            f"an integrity repair must still exit 0 — stdout={proc.stdout!r} "
+            f"stderr={proc.stderr!r}"
+        )
+        assert "WARNING" in proc.stderr, proc.stderr
+        assert meta["sha256"] in proc.stderr, "expected digest must be named"
+        assert corrupted_digest in proc.stderr, "actual (bad) digest must be named"
+        assert "REPAIRED" in proc.stdout, proc.stdout
+        assert "available at:" in proc.stdout, proc.stdout
+        assert hashlib.sha256(corrupted_path.read_bytes()).hexdigest() == meta["sha256"], (
+            "the repaired file on disk must match the registry digest again"
+        )
+
+    def test_clean_cache_hit_line_is_visibly_different_from_repair(self, tmp_path):
+        """A clean cache hit must print a distinctly different line from a
+        repair — the four outcomes must be mutually distinguishable from
+        stdout alone (10-11-PLAN.md success criteria)."""
+        name = "generic_timeseries_forecasting"
+        meta = DATASET_REGISTRY[name]
+
+        env = dict(os.environ, XDG_CACHE_HOME=str(tmp_path))
+        env.pop("MMCLI_DATASETS", None)
+        env.pop("MMCLI_AUTO_FETCH", None)
+
+        cache_dir = tmp_path / "mmcli" / "datasets" / DATASETS_DEFAULT_VERSION
+        cache_dir.mkdir(parents=True)
+        good_path = cache_dir / meta["filename"]
+        shutil.copyfile(
+            os.path.join(_REAL_BUNDLED_DIR, meta["filename"]), good_path
+        )
+        assert hashlib.sha256(good_path.read_bytes()).hexdigest() == meta["sha256"]
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "datasets", "pull", name],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+            timeout=60,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stderr == "", (
+            "a clean cache hit must not print any WARNING: " + proc.stderr
+        )
+        assert "already cached" in proc.stdout
+        assert "REPAIRED" not in proc.stdout
+        assert "available at:" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# 10-11-PLAN.md Task 2 — the opt-in --progress-json event stream, driven
+# through the real CLI entry point (D-5 is LOCKED: see 10-CONTEXT.md)
+# ---------------------------------------------------------------------------
+
+@_needs_real_zips
+class TestProgressJsonCli:
+    """Subprocess-level tests, same pattern as
+    TestDatasetsPullIntegrityRepairSubprocess above. All three use a planted,
+    already-verified cache entry (the cache-hit path) so no real network
+    request is made — the point here is the JSON stream and its absence
+    without the flag, not the transfer itself (that path is covered by
+    TestProgressEvents in test_datasets_download.py, which redirects the
+    real downloader to a local http_server fixture).
+    """
+
+    def _env_with_cached_entry(self, tmp_path, name):
+        meta = DATASET_REGISTRY[name]
+        env = dict(os.environ, XDG_CACHE_HOME=str(tmp_path))
+        env.pop("MMCLI_DATASETS", None)
+        env.pop("MMCLI_AUTO_FETCH", None)
+        cache_dir = tmp_path / "mmcli" / "datasets" / DATASETS_DEFAULT_VERSION
+        cache_dir.mkdir(parents=True)
+        good_path = cache_dir / meta["filename"]
+        shutil.copyfile(os.path.join(_REAL_BUNDLED_DIR, meta["filename"]), good_path)
+        assert hashlib.sha256(good_path.read_bytes()).hexdigest() == meta["sha256"]
+        return env
+
+    def test_progress_json_on_cache_hit_emits_only_valid_ndjson_result(self, tmp_path):
+        import json as _json
+        name = "generic_timeseries_forecasting"
+        meta = DATASET_REGISTRY[name]
+        env = self._env_with_cached_entry(tmp_path, name)
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "datasets", "pull",
+             "--progress-json", name],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+            timeout=60,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        lines = [ln for ln in proc.stderr.splitlines() if ln.strip()]
+        assert lines, "expected at least the result event on stderr"
+        events = [_json.loads(ln) for ln in lines]  # every line must parse
+        assert all(e["v"] == 1 for e in events)
+        results = [e for e in events if e["event"] == "result"]
+        assert len(results) == 1
+        assert results[0]["outcome"] == "cache-hit"
+        assert results[0]["dataset"] == name
+        assert not any(e["event"] == "start" for e in events)
+        assert not any(e["event"] == "progress" for e in events)
+        # available-at line still prints on stdout, unaffected by the flag.
+        assert "available at:" in proc.stdout
+
+    def test_without_flag_emits_no_json_on_stderr(self, tmp_path):
+        """D-5 regression guard: fails if mmcli ever becomes chattier by
+        default. Same input as the previous test, minus --progress-json."""
+        import json as _json
+        name = "generic_timeseries_forecasting"
+        env = self._env_with_cached_entry(tmp_path, name)
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "datasets", "pull", name],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+            timeout=60,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        for ln in proc.stderr.splitlines():
+            if not ln.strip():
+                continue
+            with pytest.raises(_json.JSONDecodeError):
+                _json.loads(ln)
+        assert "available at:" in proc.stdout
+
+    def test_progress_json_flag_not_recognized_by_init(self, tmp_path):
+        """10-CONTEXT.md D-5 is LOCKED: --progress-json lands on `datasets
+        pull` only. `init --dataset` must not accept it at all — proving
+        this at the argparse level is stronger than proving init's TTY
+        refusal message is merely unchanged, since it shows the flag has no
+        way to reach the D-5 decision path in the first place."""
+        env = dict(os.environ, XDG_CACHE_HOME=str(tmp_path))
+        env.pop("MMCLI_DATASETS", None)
+        project = tmp_path / "proj"
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "init",
+             "--task", "generic_timeseries_forecasting",
+             "--dataset", "generic_timeseries_forecasting",
+             "--project", str(project),
+             "--progress-json"],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+            timeout=30,
+        )
+
+        assert proc.returncode != 0
+        assert "unrecognized argument" in proc.stderr.lower(), proc.stderr
+        assert not project.exists()

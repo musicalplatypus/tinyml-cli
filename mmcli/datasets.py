@@ -27,10 +27,12 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from typing import Callable, NamedTuple
 
 try:
     # tqdm is a declared dependency (requirements.txt); guarded for the rare
@@ -523,9 +525,19 @@ class _HostLockedRedirectHandler(urllib.request.HTTPRedirectHandler):
         )
 
 
+# Progress-event throttle (10-11-PLAN.md Task 2 / T-10-11-03): emit the
+# first chunk immediately, then no more often than this interval OR this
+# many bytes, whichever comes first. Unthrottled, a 56 MB transfer at 64 KiB
+# per read is ~860 lines through a pipe the GUI parses on its main actor's
+# stream.
+_PROGRESS_THROTTLE_SECONDS = 0.2
+_PROGRESS_THROTTLE_BYTES = 1024 * 1024  # 1 MiB
+
+
 def _download_to_cache(url: str, cache_dir: str, filename: str,
                        expected_sha256: str, expected_bytes: int,
-                       name: str) -> str:
+                       name: str, *,
+                       on_event: Callable[[dict], None] | None = None) -> str:
     """Low-level atomic download + verify, shared by `fetch_dataset`.
 
     Does not enforce a URL scheme itself — `fetch_dataset` is the only place
@@ -546,6 +558,15 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
     echoing the raw errno string), or any lower-level urllib/socket failure.
     The temp file is always removed on any failure path; nothing is left on
     disk "for debugging".
+
+    *on_event*, if given, is called with a plain dict — never serialized
+    here (10-11-PLAN.md Task 2: encoding is `cli.py`'s job, not this
+    module's) — for a ``"start"`` event immediately before the read loop
+    begins, and for ``"progress"`` events during it, throttled to
+    `_PROGRESS_THROTTLE_SECONDS` / `_PROGRESS_THROTTLE_BYTES` with an
+    unconditional final progress event at 100% before returning. Every
+    event carries only *name* and byte counts — never *url*, *cache_dir* or
+    any other filesystem/network detail (T-10-11-02).
     """
     dest_path = os.path.join(cache_dir, filename)
     # 1% of the expected size or 1 KiB, whichever is larger — enough slack
@@ -605,11 +626,22 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
 
             hasher = hashlib.sha256()
             total = 0
-            show_progress = tqdm is not None and stderr_is_tty()
+            # `on_event is None`: when the caller asked for machine-readable
+            # progress (10-11-PLAN.md Task 2), the tqdm bar is suppressed
+            # regardless of TTY — two progress renderers interleaved on one
+            # stream produces garbage for both.
+            show_progress = tqdm is not None and stderr_is_tty() and on_event is None
             bar = (
                 tqdm(total=expected_bytes, unit="B", unit_scale=True, desc=name)
                 if show_progress else None
             )
+            if on_event is not None:
+                on_event({
+                    "v": 1, "event": "start", "dataset": name,
+                    "total_bytes": expected_bytes,
+                })
+            last_progress_emit_time = time.monotonic()
+            last_progress_emit_bytes = None  # sentinel: force the first emit
             try:
                 # The `with` is inside its own try/except OSError as well as the
                 # per-write guard below: writes are buffered, so the final flush
@@ -648,6 +680,28 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
                         hasher.update(chunk)
                         if bar is not None:
                             bar.update(len(chunk))
+                        if on_event is not None:
+                            now = time.monotonic()
+                            if (
+                                last_progress_emit_bytes is None
+                                or (now - last_progress_emit_time) >= _PROGRESS_THROTTLE_SECONDS
+                                or (total - last_progress_emit_bytes) >= _PROGRESS_THROTTLE_BYTES
+                            ):
+                                on_event({
+                                    "v": 1, "event": "progress", "dataset": name,
+                                    "bytes": total, "total_bytes": expected_bytes,
+                                })
+                                last_progress_emit_time = now
+                                last_progress_emit_bytes = total
+                    if on_event is not None and last_progress_emit_bytes != total:
+                        # Always emit a final progress at 100% before result,
+                        # even if the throttle above never fired for the very
+                        # last chunk (or never fired at all, for a body
+                        # smaller than one read()).
+                        on_event({
+                            "v": 1, "event": "progress", "dataset": name,
+                            "bytes": total, "total_bytes": expected_bytes,
+                        })
             except OSError as exc:
                 # Only reachable for an OSError raised outside the per-write
                 # guard — in practice the buffered flush on close. Same
@@ -696,12 +750,50 @@ def _download_to_cache(url: str, cache_dir: str, filename: str,
         raise
 
 
-def fetch_dataset(name: str, *, force: bool = False) -> str:
-    """Download, verify (sha256) and cache the mirrored dataset zip for *name*.
+class FetchResult(NamedTuple):
+    """Outcome of `fetch_dataset_detailed`: the verified cache path, plus
+    which of the four `FETCH_OUTCOMES` literals produced it (10-11-PLAN.md
+    Gap 1 — REQ-DATA-02's "fails loudly" also means a *repair* must be
+    visible, not only a genuine failure).
+    """
+    path: str
+    outcome: str
 
-    Returns the path to the verified, cached file. If a correctly-verified
-    copy is already cached and *force* is False, returns it immediately
-    without issuing any network request.
+
+# The only four literals `FetchResult.outcome` may ever hold. One source of
+# truth so a typo (e.g. "cache_hit" vs "cache-hit") is a set-membership
+# assertion failure in fetch_dataset_detailed, not a silently wrong CLI line.
+FETCH_OUTCOMES: frozenset[str] = frozenset(
+    {"cache-hit", "downloaded", "forced-redownload", "integrity-repair"}
+)
+
+
+def fetch_dataset_detailed(name: str, *, force: bool = False,
+                           on_event: Callable[[dict], None] | None = None) -> FetchResult:
+    """Download, verify (sha256) and cache the mirrored dataset zip for
+    *name*, reporting which of `FETCH_OUTCOMES` produced the result.
+
+    This is `fetch_dataset`'s full-detail sibling — `fetch_dataset` itself
+    stays a thin `str`-returning wrapper around this function so existing
+    callers (`scripts/verify_dataset_digests.py`, `cli.py:_fetch_or_exit`,
+    `init --dataset`'s auto-fetch policy, and the pre-10-11 test suite) are
+    unaffected. `fetch_dataset` does not gain an `on_event` parameter either
+    — nothing needs it there, and keeping that signature frozen is what
+    makes this whole change non-breaking.
+
+    Returns a `FetchResult` whose `path` is the verified, cached file. If a
+    correctly-verified copy is already cached and *force* is False, returns
+    it immediately (outcome ``"cache-hit"``) without issuing any network
+    request.
+
+    *on_event*, if given, is called with a plain dict (never serialized here
+    — `datasets.py` builds event structure, `cli.py` decides how to encode
+    it) for each event in the 10-11-PLAN.md "cross-repo contract" schema:
+    an ``"integrity-repair"`` event here (at the same point as the WARNING,
+    preceding any ``"start"``), plus whatever `_download_to_cache` emits,
+    and finally a ``"result"`` event as the last statement on every success
+    path — including the ``cache-hit`` early return, which is why this
+    parameter cannot simply be forwarded to `_download_to_cache` alone.
 
     Raises
     ------
@@ -713,7 +805,9 @@ def fetch_dataset(name: str, *, force: bool = False) -> str:
         even on this explicit call), *name* has no ti_name (nothing to fetch
         — it is bundled-only), the composed URL is not HTTPS, or the
         download/verification fails for any of the reasons documented on
-        `_download_to_cache`.
+        `_download_to_cache`. On any RuntimeError, no ``"result"`` event is
+        emitted — the CLI's existing ``ERROR: ...`` line and non-zero exit
+        remain the failure signal.
     """
     meta = DATASET_REGISTRY[name]  # KeyError on unknown name, deliberately
 
@@ -741,12 +835,43 @@ def fetch_dataset(name: str, *, force: bool = False) -> str:
     version = meta.get("ti_version") or DATASETS_DEFAULT_VERSION
     cache_dir = _cache_dir(version)
     dest_path = os.path.join(cache_dir, meta["filename"])
+    pre_existing = os.path.isfile(dest_path)
 
-    if not force and os.path.isfile(dest_path):
-        if _sha256_of(dest_path) == meta["sha256"]:
-            return dest_path
-        # Stale or corrupted cache entry: fall through and redownload rather
-        # than serving bad bytes.
+    if force:
+        # 10-11-PLAN.md Task 1: forced-redownload vs downloaded is decided by
+        # whether *something* was already sitting at dest_path, not by
+        # whether it was valid — force skips verification of the pre-existing
+        # entry entirely.
+        outcome = "forced-redownload" if pre_existing else "downloaded"
+    elif pre_existing:
+        actual = _sha256_of(dest_path)
+        if actual == meta["sha256"]:
+            if on_event is not None:
+                on_event({
+                    "v": 1, "event": "result", "dataset": name,
+                    "outcome": "cache-hit", "total_bytes": meta["bytes"],
+                })
+            return FetchResult(dest_path, "cache-hit")
+        # Stale or corrupted cache entry: report it loudly (REQ-DATA-02;
+        # 10-UAT.md Gap 1 — this used to fall through silently) before
+        # discarding it and redownloading rather than serving bad bytes.
+        # Unconditional: no stderr_is_tty() guard, no verbosity flag. This is
+        # an integrity event, not progress chatter, and must reach a piped
+        # caller (e.g. PlatypusStudio) exactly as it reaches a terminal.
+        print(
+            f"WARNING: the cached copy of '{name}' at {dest_path} does not "
+            f"match its recorded sha256 (expected {meta['sha256']}, got "
+            f"{actual}). Discarding it and re-downloading; the bad bytes "
+            f"are not being used.",
+            file=sys.stderr,
+        )
+        if on_event is not None:
+            # Precedes "start" (10-11-PLAN.md cross-repo contract): emitted
+            # before the unlink/redownload below, same as the WARNING above.
+            on_event({
+                "v": 1, "event": "integrity-repair", "dataset": name,
+                "total_bytes": meta["bytes"],
+            })
         try:
             os.unlink(dest_path)
         except OSError as exc:
@@ -758,10 +883,44 @@ def fetch_dataset(name: str, *, force: bool = False) -> str:
                 f"Cached copy of '{name}' at {dest_path} failed verification "
                 f"and could not be removed: {exc}"
             ) from exc
+        outcome = "integrity-repair"
+    else:
+        outcome = "downloaded"
 
-    return _download_to_cache(
-        url, cache_dir, meta["filename"], meta["sha256"], meta["bytes"], name
+    assert outcome in FETCH_OUTCOMES, f"unreachable: unknown outcome {outcome!r}"
+
+    path = _download_to_cache(
+        url, cache_dir, meta["filename"], meta["sha256"], meta["bytes"], name,
+        on_event=on_event,
     )
+    if on_event is not None:
+        on_event({
+            "v": 1, "event": "result", "dataset": name,
+            "outcome": outcome, "total_bytes": meta["bytes"],
+        })
+    return FetchResult(path, outcome)
+
+
+def fetch_dataset(name: str, *, force: bool = False) -> str:
+    """Download, verify (sha256) and cache the mirrored dataset zip for *name*.
+
+    Returns the path to the verified, cached file. If a correctly-verified
+    copy is already cached and *force* is False, returns it immediately
+    without issuing any network request.
+
+    Raises
+    ------
+    KeyError
+        *name* is not in DATASET_REGISTRY.
+    RuntimeError
+        MMCLI_DATASETS is set (REQ-DATA-03 — this variable signals a
+        managed/air-gapped environment and disables fetching unconditionally,
+        even on this explicit call), *name* has no ti_name (nothing to fetch
+        — it is bundled-only), the composed URL is not HTTPS, or the
+        download/verification fails for any of the reasons documented on
+        `_download_to_cache`.
+    """
+    return fetch_dataset_detailed(name, force=force).path
 
 
 # ---------------------------------------------------------------------------
