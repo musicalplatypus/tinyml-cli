@@ -1743,10 +1743,25 @@ def _resolve_explicit_fetch(args: argparse.Namespace) -> bool | None:
     if cli_value is not None:
         return cli_value
     env = os.environ.get("MMCLI_AUTO_FETCH")
-    if env == "1":
-        return True
-    if env == "0":
-        return False
+    if env is not None:
+        # 10-REVIEW.md WR-11: normalise case/whitespace and accept common
+        # boolean spellings. Previously only the exact strings "1"/"0" were
+        # recognised — "false", "no", "off", or "0 " (trailing space) all
+        # fell through to the TTY-check default, meaning a user who set the
+        # variable specifically to DISABLE fetching could get a
+        # multi-megabyte download instead: the exact opposite of their
+        # stated intent, with no warning.
+        normalised = env.strip().lower()
+        if normalised in ("1", "true", "yes", "on"):
+            return True
+        if normalised in ("0", "false", "no", "off"):
+            return False
+        print(
+            f"WARNING: ignoring unrecognised MMCLI_AUTO_FETCH={env!r} "
+            f"(expected 1/0/true/false/yes/no/on/off); falling back to the "
+            f"TTY rule.",
+            file=sys.stderr,
+        )
     return None
 
 

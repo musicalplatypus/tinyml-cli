@@ -44,6 +44,7 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
+import mmcli.cli as cli_mod
 import mmcli.datasets as datasets_mod
 from mmcli.cli import main as cli_main
 from mmcli.datasets import (
@@ -687,6 +688,61 @@ class TestDatasetsRemove:
         code, out, err = _run(monkeypatch, capsys, ["datasets", "remove", _SMALL_TI_DATASET])
         assert code == 1, err
         assert "ERROR" in err
+
+
+# ---------------------------------------------------------------------------
+# 10-REVIEW.md WR-11 — MMCLI_AUTO_FETCH normalisation and precedence
+# ---------------------------------------------------------------------------
+
+class TestResolveExplicitFetch:
+    """`_resolve_explicit_fetch` was previously completely untested — the
+    only reference in this file was an unrelated `monkeypatch.delenv`. Before
+    WR-11's fix, only the literal strings "1"/"0" were recognised; anything
+    else (including "false", "no", "off", or "0 " with trailing whitespace)
+    silently fell through to the TTY-check default — the exact opposite of
+    a user's stated intent to disable fetching, with no warning.
+    """
+
+    def _args(self, fetch=None):
+        import argparse
+        return argparse.Namespace(fetch=fetch)
+
+    def test_env_absent_returns_none(self, monkeypatch):
+        monkeypatch.delenv("MMCLI_AUTO_FETCH", raising=False)
+        assert cli_mod._resolve_explicit_fetch(self._args()) is None
+
+    @pytest.mark.parametrize("value", ["1", "true", "True", "TRUE", "yes", "on", " 1 "])
+    def test_recognised_true_values(self, monkeypatch, value):
+        monkeypatch.setenv("MMCLI_AUTO_FETCH", value)
+        assert cli_mod._resolve_explicit_fetch(self._args()) is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "False", "FALSE", "no", "off", " 0 "])
+    def test_recognised_false_values(self, monkeypatch, value):
+        monkeypatch.setenv("MMCLI_AUTO_FETCH", value)
+        assert cli_mod._resolve_explicit_fetch(self._args()) is False
+
+    @pytest.mark.parametrize("value", ["maybe", "disable", "2", ""])
+    def test_unrecognised_value_falls_back_to_none_with_warning(
+        self, monkeypatch, capsys, value
+    ):
+        monkeypatch.setenv("MMCLI_AUTO_FETCH", value)
+        result = cli_mod._resolve_explicit_fetch(self._args())
+        assert result is None
+        err = capsys.readouterr().err
+        assert "WARNING" in err
+        assert "MMCLI_AUTO_FETCH" in err
+
+    def test_cli_flag_true_beats_env_false(self, monkeypatch):
+        monkeypatch.setenv("MMCLI_AUTO_FETCH", "0")
+        assert cli_mod._resolve_explicit_fetch(self._args(fetch=True)) is True
+
+    def test_cli_flag_false_beats_env_true(self, monkeypatch):
+        monkeypatch.setenv("MMCLI_AUTO_FETCH", "1")
+        assert cli_mod._resolve_explicit_fetch(self._args(fetch=False)) is False
+
+    def test_neither_cli_flag_nor_env_returns_none(self, monkeypatch):
+        monkeypatch.delenv("MMCLI_AUTO_FETCH", raising=False)
+        assert cli_mod._resolve_explicit_fetch(self._args(fetch=None)) is None
 
 
 # ---------------------------------------------------------------------------
