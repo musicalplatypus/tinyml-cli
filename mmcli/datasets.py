@@ -24,6 +24,7 @@ refuse to import.
 import errno
 import hashlib
 import os
+import shutil
 import sys
 import tempfile
 import urllib.error
@@ -891,15 +892,27 @@ def extract_dataset(dataset_name: str, project_path: str,
                 if not (real_extracted == root or real_extracted.startswith(root + os.sep)):
                     if os.path.isfile(real_extracted):
                         os.remove(real_extracted)
+                    shutil.rmtree(project_path, ignore_errors=True)
                     print(
                         f"ERROR: refusing to extract '{member}' from "
-                        f"'{zip_path}': it escaped to {real_extracted}",
+                        f"'{zip_path}': it escaped to {real_extracted}\n"
+                        f"The partially created project directory has been removed.",
                         file=sys.stderr,
                     )
                     sys.exit(2)
-    except zipfile.BadZipFile:
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, RuntimeError) as exc:
+        # 10-REVIEW.md WR-13: previously only BadZipFile was caught, and the
+        # half-created <project>/dataset/ directory was left behind on any
+        # failure — the docstring above promises SystemExit "on any error",
+        # but zipfile.LargeZipFile, RuntimeError (an encrypted member) and
+        # OSError (disk full, permission denied mid-extract) all escaped as
+        # raw tracebacks, and the next attempt then hit the "Project
+        # directory already exists" check above and refused, requiring a
+        # manual `rm -rf` of a directory mmcli itself created and abandoned.
+        shutil.rmtree(project_path, ignore_errors=True)
         print(
-            f"ERROR: '{zip_path}' is not a valid zip file.",
+            f"ERROR: failed to extract '{zip_path}' into {dataset_dir}: {exc}\n"
+            f"The partially created project directory has been removed.",
             file=sys.stderr,
         )
         sys.exit(2)

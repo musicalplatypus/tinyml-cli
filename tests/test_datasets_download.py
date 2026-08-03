@@ -500,6 +500,89 @@ class TestZipSlipProtection:
             DATASET_REGISTRY.pop("_test_only_zip_slip", None)
 
 
+class TestExtractDatasetFailureCleanup:
+    """10-REVIEW.md WR-13: a failed extraction must not leave a half-created
+    <project>/dataset/ directory behind — the next attempt would otherwise
+    hit the "Project directory already exists" refusal and require a manual
+    `rm -rf` of a directory mmcli itself created and abandoned. Also widens
+    the except clause: the docstring promises SystemExit "on any error", but
+    previously only zipfile.BadZipFile was caught.
+    """
+
+    def test_bad_zip_file_removes_the_half_created_project_directory(
+        self, isolated_cache, tmp_path
+    ):
+        DATASET_REGISTRY["_test_only_bad_zip"] = {
+            "filename": "not_a_zip.zip",
+            "task_types": ["generic_timeseries_classification"],
+            "module": "timeseries",
+            "description": "corrupt-zip regression fixture",
+        }
+        env_dir = tmp_path / "env"
+        env_dir.mkdir()
+        (env_dir / "not_a_zip.zip").write_bytes(b"this is not a valid zip file at all")
+
+        project_path = str(tmp_path / "proj")
+        try:
+            os.environ["MMCLI_DATASETS"] = str(env_dir)
+            with pytest.raises(SystemExit):
+                extract_dataset(
+                    "_test_only_bad_zip", project_path,
+                    task_type="generic_timeseries_classification",
+                )
+            assert not os.path.exists(project_path), (
+                "a failed extraction left a half-created project directory "
+                "behind — the next attempt would hit 'already exists'"
+            )
+        finally:
+            os.environ.pop("MMCLI_DATASETS", None)
+            DATASET_REGISTRY.pop("_test_only_bad_zip", None)
+
+    def test_oserror_mid_extract_is_caught_and_cleans_up(
+        self, isolated_cache, tmp_path, monkeypatch
+    ):
+        # Widened except clause (10-REVIEW.md WR-13): OSError (disk full,
+        # permission denied mid-extract) must be caught, not escape as a raw
+        # traceback the docstring's "SystemExit on any error" promise
+        # contradicts.
+        import zipfile as _zipfile
+
+        real_zip = tmp_path / "real.zip"
+        with _zipfile.ZipFile(real_zip, "w") as zf:
+            zf.writestr("classes/class_a/ok.csv", "1,2,3\n")
+
+        DATASET_REGISTRY["_test_only_oserror"] = {
+            "filename": "real.zip",
+            "task_types": ["generic_timeseries_classification"],
+            "module": "timeseries",
+            "description": "OSError-mid-extract regression fixture",
+        }
+        env_dir = tmp_path / "env"
+        env_dir.mkdir()
+        (env_dir / "real.zip").write_bytes(real_zip.read_bytes())
+
+        def _raise_oserror(self, member, path=None, pwd=None):
+            raise OSError("disk full (simulated)")
+
+        monkeypatch.setattr(_zipfile.ZipFile, "extract", _raise_oserror)
+
+        project_path = str(tmp_path / "proj")
+        try:
+            os.environ["MMCLI_DATASETS"] = str(env_dir)
+            with pytest.raises(SystemExit):
+                extract_dataset(
+                    "_test_only_oserror", project_path,
+                    task_type="generic_timeseries_classification",
+                )
+            assert not os.path.exists(project_path), (
+                "an OSError mid-extract left a half-created project "
+                "directory behind"
+            )
+        finally:
+            os.environ.pop("MMCLI_DATASETS", None)
+            DATASET_REGISTRY.pop("_test_only_oserror", None)
+
+
 # ---------------------------------------------------------------------------
 # Task 3 — fetch_dataset / _download_to_cache
 # ---------------------------------------------------------------------------
