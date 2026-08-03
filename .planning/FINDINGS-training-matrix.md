@@ -139,3 +139,84 @@ This means a user following the documented `init` → `train` flow with default 
 error, on a combination that works fine once a preset is named. The sweep records
 `PASS` and `PASS-WITH-PRESET` as distinct outcomes precisely so the size of this gap is
 measurable rather than hidden.
+
+---
+
+# FINAL RESULTS — sweep complete (75/75)
+
+`--epochs 1 --training-device cpu`. Raw data: `training-matrix-results.{ndjson,csv}`.
+Total successful-run compute: 2.71 h across 24 passing combinations.
+
+| Outcome | Count | Tasks |
+|---|---:|---|
+| **PASS-WITH-PRESET** | **24** | generic_timeseries_classification (24/24) |
+| CONFIG-INVALID | 16 | anomalydetection (12), image_classification (3), audio_classification (1) |
+| FE-MISMATCH | 12 | generic_timeseries_forecasting (12/12) |
+| ARTIFACT-MISSING | 11 | generic_timeseries_regression (11/11) |
+| TRAIN-FAIL | 9 | arc_fault (4), motor_fault (3), ecg_classification (1), pir_detection (1) |
+| BLOCKED | 3 | blower_imbalance |
+
+**Outcomes cluster perfectly by task — not one task has a mixed result.** Every failure is a
+task-level defect; no individual model failed on its own merits. Of 11 tasks, exactly **one**
+trains end to end.
+
+## Working combinations
+
+**24 of 24 `generic_timeseries_classification` models pass**, every one with
+`--feature-extraction Generic_256Input_RAW_256Feature_1Frame`, 340–678 s (median 359 s), both
+ONNX artifacts present in all 24. **Zero combinations pass with the default preset** — see F-5.
+
+Models: CLS_100/500/1k/1.2k/1.5k/1.9k/2k/2.8k/3.1k/3.9k/4k/4.2k/5k/6k/8k/13k/20k/40k/55k_NPU,
+CLS_ResAdd_3k, CLS_ResCat_3k, ElectricalFault_model_40k_t, GearboxFault_model_1.2k_t,
+GearboxFault_model_1.5k_t.
+
+## F-6 — `mmcli train` exits 0 while producing nothing (regression)
+
+**Severity: highest of the sweep.** All 11 `generic_timeseries_regression` combinations exit **0**
+in ~7.5 s having written **no artifacts**, while logging:
+
+```
+File: <proj>/run/dataset/files/file_4.csv.
+Error message: index 2 is out of bounds for axis 0 with size 2
+```
+
+Reproduced by hand twice, deterministically, with the task's own catalog preset
+`Generic_8Input_ABS_8Feature_1Frame`. Any script, CI job or GUI that trusts the exit code will
+record these as successful training runs. This is the "green but broken" class.
+
+**The models themselves are fine.** The same `REGR_1k` trains successfully — exit 0, both
+artifacts, ~6 min — when given `Generic_256Input_RAW_256Feature_1Frame`, a preset the regression
+catalog does **not** list. So the defect is the catalog preset plus the swallowed error, not the
+model.
+
+*Correction:* this was first attributed to the default preset. Wrong — with the default preset
+regression exits **1** (verified three times). The exit-0 path is specific to
+`Generic_8Input_ABS_8Feature_1Frame`.
+
+## F-1 is wider than first reported — 16 combinations, not 12
+
+The unconditional `annotations/` precondition (`mmcli/cli.py:2001`) also blocks
+**image_classification (3)** and **audio_classification (1)**, not just anomaly detection.
+16 of 75 cells are "not tested" rather than "failed" — mmcli refused before modelmaker ran.
+
+## F-3 is wider than first reported — 7 combinations
+
+Catalog entries missing from the installed `tinyml_modelzoo` registry now include `motor_fault`
+as well as `arc_fault`: `CNN_AF_3L_{200,300,700,1400}` and `CNN_MF_{1L,2L,3L}`.
+
+## Two further single-combination failures
+
+- `ecg_classification` / ECG_model_1 → `KeyError: 'ecg_classification'`
+- `pir_detection` / PIR_model_1 → `AssertionError: min tensor([nan × 8]) should be less than max
+  tensor([nan × 8])` — all-NaN feature tensor
+
+## Honest limits of this sweep
+
+- A PASS means **one epoch completed and both ONNX files were written**. It says nothing about
+  whether the model learned anything. No accuracy threshold was applied.
+- The 16 CONFIG-INVALID combinations have **unknown** true status.
+- Only one FE preset was tried per task. A different preset may rescue forecasting or regression;
+  the full model×task×preset space (456+ on classification alone) was not explored.
+- The 12 forecasting and 11 regression failures share the same underlying
+  `Not enough dimensions present` / feature-shape family as F-5, so a single upstream FE fix may
+  move many cells at once.
