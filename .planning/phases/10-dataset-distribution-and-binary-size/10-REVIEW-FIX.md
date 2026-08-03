@@ -1,24 +1,29 @@
 ---
 phase: 10-dataset-distribution-and-binary-size
-fixed_at: 2026-08-03T00:25:15Z
+fixed_at: 2026-08-03T04:49:03Z
 review_path: .planning/phases/10-dataset-distribution-and-binary-size/10-REVIEW.md
-iteration: 1
-findings_in_scope: 16
-fixed: 16
+iteration: 2
+findings_in_scope: 23
+fixed: 23
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 10: Code Review Fix Report
 
-**Fixed at:** 2026-08-03T00:25:15Z
+**Fixed at:** 2026-08-03T04:49:03Z
 **Source review:** .planning/phases/10-dataset-distribution-and-binary-size/10-REVIEW.md
-**Iteration:** 1
+**Iteration:** 2 (cumulative — iteration 1 fixed CR-01/CR-02/WR-01..WR-14; iteration 2 fixed
+the 7 Info findings IN-01..IN-07)
 
 **Summary:**
-- Findings in scope: 16 (2 Critical + 14 Warning; Info findings IN-01..IN-07 are out of scope per `fix_scope: critical_warning`)
-- Fixed: 16
+- Findings in scope: 23 (2 Critical + 14 Warning + 7 Info)
+- Fixed: 23
 - Skipped: 0
+
+This report is cumulative across both fix iterations. Iteration 1's findings and their
+commits (`770bf84`..`5bcfec7`) are preserved below verbatim from the original report;
+iteration 2 added the "Info findings (iteration 2)" section and its own final verification.
 
 ## Mandatory mutation-testing discipline (CR-01, CR-02)
 
@@ -40,8 +45,9 @@ to its pre-mutation state afterward (`git diff` empty before each commit).
 
 Every Warning-severity test-guard fix below also received a real red/green mutation-test
 cycle (not just a passing run against the fixed code); each is documented individually.
+Every Info-severity fix in iteration 2 (below) received the same treatment.
 
-## Fixed Issues
+## Fixed Issues (iteration 1: CR-01, CR-02, WR-01..WR-14)
 
 ### CR-01: Binary size gate is bypassable — the retired 145 MiB ceiling was still sanctioned
 
@@ -122,11 +128,11 @@ checks the file exists before invoking it. Created `tests/test_release_scripts.p
 tests) covering both scripts' decision logic with `gh`/subprocess/`fetch_dataset` stubbed:
 missing-`gh` failing closed, wrong tagName, missing/zero-size asset, non-zero digest exit,
 missing digest script, CWD-independence, and `verify_dataset_digests.py`'s pass/fail/unknown
-`--only` paths. This file is **not** one of the six CI-collected files (that gap is IN-06,
-an Info finding, out of scope) — run separately, 17/17 pass. Mutation-tested: reverted the
-WR-03 code change and re-ran the new tests — 3 of them (the `gh`-missing and
-`REPO_ROOT`-dependent ones) correctly went red (`FileNotFoundError` propagating raw, and
-`AttributeError: no attribute 'REPO_ROOT'`); restored, confirmed green.
+`--only` paths. This file is **not** one of the six CI-collected files at the time of
+iteration 1 (that gap was IN-06, then Info/out-of-scope) — run separately, 17/17 pass.
+Mutation-tested: reverted the WR-03 code change and re-ran the new tests — 3 of them (the
+`gh`-missing and `REPO_ROOT`-dependent ones) correctly went red (`FileNotFoundError`
+propagating raw, and `AttributeError: no attribute 'REPO_ROOT'`); restored, confirmed green.
 
 ### WR-05: The redirect handler locked the host but not the scheme
 
@@ -288,48 +294,210 @@ restored the old `continue-on-error` line — the new test correctly failed; rem
 confirmed `git diff .github/workflows/release.yml` matched exactly the intended diff before
 committing.
 
+## Fixed Issues (iteration 2: IN-01..IN-07)
+
+### IN-01: `verify_dataset_digests.py --only <bundled-only>` reported a registry-wide message
+
+**Files modified:** `scripts/verify_dataset_digests.py`, `tests/test_release_scripts.py`
+**Commit:** `529ec8f`
+**Applied fix:** When `checked == 0`, distinguish `args.only is not None` (a real registry
+entry with no mirror asset, e.g. `generic_audio_classification`) from the true whole-registry
+case: prints `"'{name}' has no mirror asset and is not fetchable (bundled-only)."` and returns
+`2` (an argument-shape problem, consistent with the existing unknown-name case) instead of the
+generic "No fetchable datasets found in DATASET_REGISTRY." + exit `1`. Added
+`test_only_bundled_only_name_reports_specific_message_not_registry_wide`. Mutation-tested:
+reverted the source fix — the new test failed (`assert 1 == 2`, old registry-wide message
+present in stderr); restored, confirmed green.
+
+### IN-02: `--skip-digests` returned exit 0 for a partial gate; static `[1/2]` labels
+
+**Files modified:** `scripts/release_preflight.py`, `tests/test_release_scripts.py`, `docs/RELEASING.md`
+**Commit:** `c950c7f`
+**Applied fix:** Introduced `PARTIAL_EXIT_CODE = 3`, returned by `main()` for a
+`--skip-digests` run whose mirror check passed — deliberately not `0`, so a wrapper checking
+only `$?` cannot mistake a skipped ~131 MB digest gate for a full pass. `1` is preserved for
+an actual check failure. `check_mirror_tag_and_assets()` gained a `total_steps` kwarg
+(default `2`); `main()` passes `1` under `--skip-digests` so the `"[1/N]"` progress label
+(and the `"PREFLIGHT FAILED at step 1/N"` message) reflect that only one step will run in
+that invocation, instead of an unconditional `"[1/2]"`. Documented the new exit codes in the
+script's own docstring and `docs/RELEASING.md` §5. Updated the one pre-existing test that
+encoded the old (buggy) "exits 0" behavior; added 4 new tests (partial-exit-code value,
+`total_steps=1` under `--skip-digests`, `total_steps=2` without it, and the resulting
+`"[1/1]"` vs `"[1/2]"` label text). Mutation-tested: reverted the source fix, confirmed all 4
+new tests failed (`TypeError` on the unexpected `total_steps` kwarg / `AttributeError: no
+attribute 'PARTIAL_EXIT_CODE'` / `assert None == 1`); restored, confirmed green.
+
+### IN-03: `gh` JSON parsing was unguarded in both `release_preflight.py` and `release.yml`
+
+**Files modified:** `scripts/release_preflight.py`, `.github/workflows/release.yml`, `tests/test_release_scripts.py`
+**Commit:** `32af3e3`
+**Applied fix:** Wrapped `json.loads(result.stdout)` (plus the `.get("tagName")` access, which
+can raise `AttributeError` on non-object JSON) in `try/except (ValueError, TypeError,
+AttributeError)`, and the `{a["name"]: a.get("size", 0) for a in data.get("assets", [])}`
+comprehension in `try/except (TypeError, KeyError)` — both printing a `FATAL:` line with the
+parse error and the first 200 characters of raw `gh` output. Applied the byte-identical change
+to `release.yml`'s embedded mirror-healthcheck script (using `sys.exit(1)` instead of `return
+False`) so `tests/test_ci_workflows.py`'s WR-02 drift-guard tests (which compare the `gh` argv
+and `FATAL:` message wording between the two files) stay green — verified directly, not
+assumed. Added 4 regression tests: non-JSON stdout, non-object JSON (a bare list), `"assets":
+null`, and an asset object missing `"name"`. Mutation-tested: reverted both source files,
+confirmed all 4 new tests failed with the raw `JSONDecodeError`/`AttributeError`/
+`TypeError`/`KeyError` propagating; restored, confirmed green (drift-guard tests included).
+
+### IN-04: A cache hit for an entry with no `sha256` was reported as a digest mismatch
+
+**Files modified:** `mmcli/datasets.py`, `tests/test_datasets_download.py`
+**Commit:** `4655cd9`
+**Applied fix:** `_resolve_dataset_zip`'s cache-hit branch now distinguishes a falsy
+`expected` (no `sha256` recorded — legal for a non-`ti_name` local entry, since
+`_validate_registry` only requires `sha256` for `ti_name` entries) from an actual digest
+mismatch, with its own message stating there was nothing to verify against, and drops the
+`--force` suggestion (which fails for an entry with no fetchable URL). Added
+`test_cache_hit_with_no_sha256_reported_as_unverifiable_not_mismatch`, asserting the new
+wording is present and the old "does not match"/`--force` wording is absent. Mutation-tested:
+reverted the source fix, confirmed the new test failed (old "does not match"/`--force`
+wording present in stderr); restored, confirmed green (58 passed in
+`test_datasets_download.py`).
+
+### IN-05: Direct `os.environ` mutation and a `finally` depending on an import inside `try`
+
+**Files modified:** `tests/test_datasets_download.py`
+**Commit:** `5621d69`
+**Applied fix:** `TestZipSlipProtection::test_parent_traversal_member_stays_inside_project`
+replaced `import os as _os` (performed inside the `try`, with the `finally` depending on that
+name existing) and raw `os.environ["MMCLI_DATASETS"] = ...` / `DATASET_REGISTRY[...] = ...`
+mutation with `monkeypatch.setenv(...)` / `monkeypatch.setitem(...)`, both auto-restored on
+teardown including on assertion failure, and dropped the try/finally entirely. `os` is
+already imported at module scope, so the shadow import was purely redundant. No change to
+what the test asserts. Verified with a full run of `test_datasets_download.py` (57 passed) and
+the specific test in isolation.
+
+### IN-06: Only 6 of ~38 test files ran in either CI workflow
+
+**Files modified:** `.github/workflows/test-cli.yml`, `.github/workflows/release.yml`, `tests/test_ci_workflows.py`
+**Commit:** `8682fe3`
+**Applied fix:** Per the dispatch's mandatory procedure for this finding, ran the full suite
+for real *before* touching anything:
+`MMCLI_PYTHON=$HOME/.venv-tinyml/bin/python $HOME/.venv-tinyml/bin/python -m pytest tests/ -q
+--tb=short -k "not TestInitDatasetExtractReal"` → **644 passed, 2 skipped, 20 deselected,
+11 warnings in 698.16s**, fully green. Since fully green, widened CI scope: both workflows'
+`Run tests` step now runs
+`python -m pytest tests/ -v --tb=short -k "not TestInitDatasetExtractReal"` (collection by
+default) instead of naming six files explicitly, so `test_security.py`,
+`test_fuzz_path_validation.py`, `test_attack_surface.py`, `test_integration_security.py`, and
+every other previously-uncollected file are now in CI on every push/PR/release. Rewrote
+`tests/test_ci_workflows.py`'s drift guard to match: instead of asserting the named-file set
+is a superset of six required files, it now asserts (a) the invocation's first argument is
+the bare `tests/` directory, (b) no individual `tests/test_*.py` file is hardcoded any more
+(guards against silently narrowing back down), and (c) the two workflows' invocations are
+identical after whitespace normalisation. `REQUIRED_TEST_FILES` is kept as a lighter-weight
+residual guard (existence-on-disk only) against those six specific files being silently
+deleted/renamed, since with `tests/` collected wholesale a missing file produces no pytest
+error at all — just fewer tests run.
+
+Re-ran the full suite for real *after* the change, from a clean git status:
+**644 passed, 2 skipped, 20 deselected, 10 warnings in 675.00s** — identical pass/skip/
+deselect counts to the pre-change baseline (one fewer duplicate warning line), confirming the
+widened scope surfaces no new failures from files that were never exercised in CI before.
+Both counts were measured directly this session, not assumed from the review or from
+iteration 1.
+
+Mutation-tested the guard itself: reverted both workflow files to the old six-file,
+backslash-continued form, confirmed
+`test_pytest_invocation_collects_the_whole_tests_directory` failed (`first_arg` was the line-
+continuation backslash `'\\'`, not `'tests/'`); the other new/kept tests in the file correctly
+stayed green under the old form (they check different properties), confirming the new test is
+the one actually carrying the regression signal. Restored, confirmed green (10 passed in
+`test_ci_workflows.py`).
+
+### IN-07: `_download_to_cache`'s cleanup handler could mask the original exception
+
+**Files modified:** `mmcli/datasets.py`, `tests/test_datasets_download.py`
+**Commit:** `629856a`
+**Applied fix:** The `except BaseException: os.unlink(tmp_path); raise` cleanup handler's own
+`os.unlink` call is now wrapped in its own `try/except OSError: pass`, so a failure to remove
+the temp file (a race with another process, a read-only mount) can never replace the real
+error (checksum mismatch, oversize body, truncated download, etc.) the user needs to see —
+cleanup is genuinely best-effort. Added
+`test_cleanup_unlink_failure_does_not_mask_the_original_error`, which patches `os.unlink` to
+raise for `.part` temp files specifically (real files unaffected) during a real checksum-
+mismatch download against the local `http.server` fixture. Mutation-tested: reverted the
+source fix, confirmed the new test failed with the raw simulated `OSError` propagating in
+place of `RuntimeError('Checksum mismatch...')` (visible in the traceback as "During handling
+of the above exception, another exception occurred"); restored, confirmed green (59 passed in
+`test_datasets_download.py`).
+
 ## Skipped Issues
 
-None — all 16 in-scope findings (CR-01, CR-02, WR-01 through WR-14) were fixed.
+None — all 23 in-scope findings (CR-01, CR-02, WR-01 through WR-14, IN-01 through IN-07) were
+fixed across both iterations.
 
-## Out of scope (not attempted)
+## Final verification (iteration 2)
 
-Info findings IN-01 through IN-07 are excluded per `fix_scope: critical_warning` and were
-not attempted.
+All commands below were run for real this session against the fix worktree; none of the
+figures are assumed or carried over unverified from the review or from iteration 1.
 
-## Final verification
+**Full suite** (before and after the IN-06 CI-scope widening — see IN-06 above for the
+before/after breakdown):
+```
+MMCLI_PYTHON=$HOME/.venv-tinyml/bin/python $HOME/.venv-tinyml/bin/python -m pytest tests/ -q \
+  --tb=short -k "not TestInitDatasetExtractReal"
+```
+Before: **644 passed, 2 skipped, 20 deselected, 11 warnings in 698.16s**.
+After: **644 passed, 2 skipped, 20 deselected, 10 warnings in 675.00s**.
 
-Ran the full six-file phase-10 suite exactly as both CI workflows do:
-
+**Six-file CI suite, exactly as both workflows ran it before IN-06** (kept as a targeted
+smoke check even though both workflows now collect all of `tests/`):
 ```
 MMCLI_PYTHON=$HOME/.venv-tinyml/bin/python $HOME/.venv-tinyml/bin/python -m pytest \
   tests/test_cli_integration.py tests/test_tier4_cli.py tests/test_build_config.py \
   tests/test_datasets_download.py tests/test_datasets_cli.py tests/test_ci_workflows.py \
   -q --tb=short -k "not TestInitDatasetExtractReal"
 ```
+Real output: **214 passed, 2 skipped, 20 deselected, 7 warnings in 264.22s**.
 
-Real output: **212 passed, 2 skipped, 20 deselected, 7 warnings in 107.11s**.
+Iteration-1 baseline for this same six-file set was **214 total** (212 passed + 2 skipped).
+This run shows **216 total** (214 passed + 2 skipped) — a difference of exactly **+2**,
+confirmed via `--collect-only`: `216/236 tests collected (20 deselected)` versus iteration
+1's recorded `214/234`. The +2 matches the two new regression tests added within these six
+files this session: IN-04's `test_cache_hit_with_no_sha256_reported_as_unverifiable_not_mismatch`
+(in `test_datasets_download.py`) and IN-07's
+`test_cleanup_unlink_failure_does_not_mask_the_original_error` (also
+`test_datasets_download.py`). IN-06's own edits to `test_ci_workflows.py` removed 3 old tests
+and added 3 new ones (net 0). IN-01/IN-02/IN-03's new tests live in
+`tests/test_release_scripts.py`, which is not one of these six files. Nothing failed.
 
-Baseline before any fixes in this session: 178 passed, 20 deselected (per dispatch
-instructions). This run added 36 new tests across the fixes above (25 in
-`test_datasets_cli.py`: WR-01 +2, WR-11 +22, WR-12 +1; 7 in `test_datasets_download.py`:
-WR-05 +3, WR-08 +2, WR-13 +2; 4 in `test_ci_workflows.py`: WR-02 +3, WR-14 +1) —
-`178 + 36 = 214` total, confirmed via `--collect-only` (`214/234 tests collected, 20
-deselected`). Of the 214, 2 are skipped: the pre-existing `_needs_real_zips`-marked
-subprocess tests, which correctly skip because this checkout's `mmcli/example_datasets/`
-contains only the one real tracked zip (`generic_audio_classification.zip`) — unrelated to
-any fix in this session, and the WR-06 fix is specifically what keeps this skip condition
-stable across repeated runs (previously it flickered based on fixture-teardown leakage).
-`178 + 36 - 2 = 212` passed. Nothing failed.
+**Real release preflight** (full ~131 MB digest gate against the live mirror, per the
+dispatch's requirement since IN-02/IN-03 touch this script directly):
+```
+$HOME/.venv-tinyml/bin/python scripts/release_preflight.py
+```
+Real output:
+```
+[1/2] Checking mirror release 'datasets-01_03_00' in musicalplatypus/tinyml-cli ...
+OK: mirror release 'datasets-01_03_00' has all 9 expected assets, all non-zero size (no payload downloaded).
+[2/2] Running scripts/verify_dataset_digests.py (full digest gate) ...
+... (9/9 PASS lines, one per fetchable dataset) ...
+All 9 fetchable dataset(s) PASSED.
 
-The new `tests/test_release_scripts.py` (WR-03/WR-04, 17 tests) is not one of the six
-CI-collected files — that gap is IN-06 (Info, out of scope). Run separately: **17 passed**.
+PREFLIGHT PASSED: mirror tag/assets OK, all fetchable digests verified. Safe to build.
+```
+Exit code: **0**. 9/9 digests PASS against the live mirror, unchanged from before IN-01/
+IN-02/IN-03 — confirming those fixes did not alter observable behaviour on the success path.
 
-`git status --short` in the fix worktree: clean (no stray mutation-test edits) before every
-commit and at the end of this session.
+**Mutation-residue check** (per the dispatch's zip-slip-marker warning): confirmed
+`/tmp/evil_zip_slip_marker.txt` does not exist and no `*evil_zip_slip*` files were left under
+`/tmp` before running the final suite.
+
+**`git status --short`** in the fix worktree: clean before every commit and at the end of
+this session (verified directly, not assumed).
+
+All 7 commits from this iteration verified to resolve as real commits
+(`git cat-file -t <sha>` → `commit` for each): `5621d69`, `529ec8f`, `4655cd9`, `629856a`,
+`32af3e3`, `c950c7f`, `8682fe3`.
 
 ---
 
-_Fixed: 2026-08-03T00:25:15Z_
+_Fixed: 2026-08-03T04:49:03Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_
