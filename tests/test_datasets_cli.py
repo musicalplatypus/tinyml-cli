@@ -898,6 +898,30 @@ class TestInitAutoFetchPolicy:
         assert code == 2
         assert "already exists" in err
 
+    def test_project_path_traversal_rejected_before_any_download_attempt(
+        self, hide_bundled, isolated_cache, monkeypatch, capsys
+    ):
+        # 10-REVIEW.md WR-12: _validate_args() (which applies _is_safe_path
+        # to --project for every other command) is never reached for `init`
+        # — this branch exits before it. `init` is the one command in the
+        # phase that creates directories, so it must apply the same guard
+        # itself rather than silently accepting a relative traversal
+        # sequence that `extract_dataset()` would then os.makedirs().
+        _forbid_download(monkeypatch)
+
+        code, out, err = _run(
+            monkeypatch, capsys,
+            [
+                "init",
+                "--task", "generic_timeseries_forecasting",
+                "--dataset", _SMALL_TI_DATASET,
+                "--project", "../../../../../../tmp/mmcli_wr12_traversal_test",
+            ],
+        )
+        assert code == 2
+        assert "unsafe path traversal" in err
+        assert not os.path.exists("/tmp/mmcli_wr12_traversal_test")
+
 
 class TestCacheInspectionHasNoSideEffects:
     """Asking where a cache entry would be must not create anything.

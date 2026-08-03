@@ -2175,6 +2175,25 @@ def main() -> None:
         # point without an explicit (idempotent) import here.
         import os
 
+        # 10-REVIEW.md WR-12: `_validate_args()` — which applies the path
+        # traversal guard to --project for every other command — is never
+        # reached for `init` (this branch exits before it). `init` is the
+        # one command in the phase that creates directories, so apply the
+        # same guard directly here rather than moving the dispatch (the rest
+        # of _validate_args enforces module/task/device/model requirements
+        # that do not apply to init's argument shape). Also sanitise --task,
+        # which is otherwise embedded unsanitised in the printed "Next
+        # steps" command (mmcli/datasets.py).
+        if args.project and not os.path.isabs(args.project) and not _is_safe_path(args.project):
+            print(
+                f"ERROR: --project/-p contains an unsafe path traversal "
+                f"sequence: {args.project!r}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if args.task:
+            args.task = _sanitize_input(args.task)
+
         # D-5 auto-fetch policy: only consulted when the dataset is not
         # already available (bundled or cached). A dataset that is already
         # present behaves exactly as before this phase — the policy is never
