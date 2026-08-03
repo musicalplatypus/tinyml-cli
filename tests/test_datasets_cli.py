@@ -899,10 +899,19 @@ class TestCacheInspectionHasNoSideEffects:
         """`datasets path` is also a pure query and must not write either."""
         env = dict(os.environ, XDG_CACHE_HOME=str(tmp_path))
         env.pop("MMCLI_DATASETS", None)
-        subprocess.run(
+        proc = subprocess.run(
             [sys.executable, "-m", "mmcli", "datasets", "path", "fan_blade_fault"],
             capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
         )
+        # 10-REVIEW.md WR-09: proc was never inspected here — if the CLI
+        # failed to start at all (import error, missing __main__, broken
+        # argparse wiring), nothing would be created and the test would pass
+        # vacuously. 0 = found locally, 1 = "not available locally" (a real,
+        # expected outcome depending on whether this dev checkout has the
+        # real dataset zips present) — anything else, or a traceback in
+        # stderr, means the CLI itself broke.
+        assert proc.returncode in (0, 1), proc.stderr
+        assert "Traceback" not in proc.stderr, proc.stderr
         assert not (tmp_path / "mmcli").exists(), (
             "`mmcli datasets path` created the cache directory"
         )
