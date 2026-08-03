@@ -446,7 +446,7 @@ class TestZipSlipProtection:
     plan's threat model calls for an explicit test rather than an assumption.
     """
 
-    def test_parent_traversal_member_stays_inside_project(self, isolated_cache, tmp_path):
+    def test_parent_traversal_member_stays_inside_project(self, isolated_cache, tmp_path, monkeypatch):
         import zipfile as _zipfile
 
         evil_zip = tmp_path / "evil.zip"
@@ -454,12 +454,12 @@ class TestZipSlipProtection:
             zf.writestr("classes/class_a/ok.csv", "1,2,3\n")
             zf.writestr("../../../../tmp/evil_zip_slip_marker.txt", "pwned\n")
 
-        DATASET_REGISTRY["_test_only_zip_slip"] = {
+        monkeypatch.setitem(DATASET_REGISTRY, "_test_only_zip_slip", {
             "filename": "evil.zip",
             "task_types": ["generic_timeseries_classification"],
             "module": "timeseries",
             "description": "zip-slip regression fixture",
-        }
+        })
         env_dir = tmp_path / "env"
         env_dir.mkdir()
         (env_dir / "evil.zip").write_bytes(evil_zip.read_bytes())
@@ -472,32 +472,32 @@ class TestZipSlipProtection:
         project_path_obj = tmp_path / "proj"
         escape_root = (project_path_obj / "dataset" / "../../../../tmp").resolve()
         marker = escape_root / "evil_zip_slip_marker.txt"
-        try:
-            import os as _os
-            _os.environ["MMCLI_DATASETS"] = str(env_dir)
-            project_path = str(project_path_obj)
-            extract_dataset(
-                "_test_only_zip_slip", project_path,
-                task_type="generic_timeseries_classification",
-            )
-            assert not marker.exists(), (
-                f"zip-slip member escaped to {marker}"
-            )
-            # Positive containment: every extracted file must stay under the
-            # project directory — non-vacuous even if the marker path above is
-            # ever wrong again.
-            resolved_project = Path(project_path).resolve()
-            extracted = [p.resolve() for p in resolved_project.rglob("*") if p.is_file()]
-            assert extracted, "nothing was extracted — the test proved nothing"
-            for p in extracted:
-                assert p.is_relative_to(resolved_project), f"{p} escaped {resolved_project}"
-            # The benign member must still have landed correctly.
-            assert os.path.isfile(
-                os.path.join(project_path, "dataset", "classes", "class_a", "ok.csv")
-            )
-        finally:
-            _os.environ.pop("MMCLI_DATASETS", None)
-            DATASET_REGISTRY.pop("_test_only_zip_slip", None)
+
+        # 10-REVIEW.md IN-05: use monkeypatch.setenv (auto-restored on
+        # teardown, including on assertion failure) instead of a raw
+        # os.environ mutation guarded by a try/finally whose cleanup depended
+        # on an import performed inside the try block.
+        monkeypatch.setenv("MMCLI_DATASETS", str(env_dir))
+        project_path = str(project_path_obj)
+        extract_dataset(
+            "_test_only_zip_slip", project_path,
+            task_type="generic_timeseries_classification",
+        )
+        assert not marker.exists(), (
+            f"zip-slip member escaped to {marker}"
+        )
+        # Positive containment: every extracted file must stay under the
+        # project directory — non-vacuous even if the marker path above is
+        # ever wrong again.
+        resolved_project = Path(project_path).resolve()
+        extracted = [p.resolve() for p in resolved_project.rglob("*") if p.is_file()]
+        assert extracted, "nothing was extracted — the test proved nothing"
+        for p in extracted:
+            assert p.is_relative_to(resolved_project), f"{p} escaped {resolved_project}"
+        # The benign member must still have landed correctly.
+        assert os.path.isfile(
+            os.path.join(project_path, "dataset", "classes", "class_a", "ok.csv")
+        )
 
 
 class TestExtractDatasetFailureCleanup:
