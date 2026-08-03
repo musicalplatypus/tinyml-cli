@@ -266,3 +266,24 @@ class TestVerifyDatasetDigestsMain:
     ):
         code = verify_dataset_digests.main(["--only", "_not_a_real_dataset_"])
         assert code == 2
+
+    def test_only_bundled_only_name_reports_specific_message_not_registry_wide(
+        self, verify_dataset_digests, capsys, _restore_xdg_cache_home
+    ):
+        # 10-REVIEW.md IN-01: --only naming a real registry entry with no
+        # mirror asset (bundled-only, e.g. generic_audio_classification)
+        # used to fall through to the generic "No fetchable datasets found
+        # in DATASET_REGISTRY" message -- true of the whole registry, false
+        # and misleading for this single-name query.
+        import mmcli.datasets as datasets_mod
+
+        bundled_only = sorted(
+            n for n in datasets_mod.DATASET_REGISTRY
+            if datasets_mod.dataset_url(n) is None
+        )[0]
+        code = verify_dataset_digests.main(["--only", bundled_only])
+        assert code == 2
+        err = capsys.readouterr().err
+        assert bundled_only in err
+        assert "not fetchable" in err
+        assert "No fetchable datasets found in DATASET_REGISTRY" not in err

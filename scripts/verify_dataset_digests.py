@@ -111,6 +111,18 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         if checked == 0:
+            if args.only is not None:
+                # --only named a real registry entry (validated above), but
+                # it has no mirror asset (dataset_url() is None — bundled-only,
+                # e.g. generic_audio_classification). Reporting the
+                # whole-registry message here (10-REVIEW.md IN-01) is
+                # misleading when nine other entries plainly are fetchable.
+                print(
+                    f"{args.only!r} has no mirror asset and is not fetchable "
+                    f"(bundled-only).",
+                    file=sys.stderr,
+                )
+                return 2
             print("No fetchable datasets found in DATASET_REGISTRY.", file=sys.stderr)
             return 1
         print(f"All {checked} fetchable dataset(s) PASSED.")
