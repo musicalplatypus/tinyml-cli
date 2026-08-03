@@ -22,13 +22,14 @@ the IDs defined in ROADMAP.md. Every phase-10 requirement is claimed by at least
 | REQ-DATA-02 | 10-02 | ✅ met |
 | REQ-DATA-03 | 10-02, 10-06, 10-05 | ✅ met |
 | REQ-DATA-04 | 10-03, 10-05 | ✅ met — re-verified after unbundling and again after the wheel change |
-| REQ-DATA-05 | 10-02, 10-03, 10-07 | ⚠️ **partially discharged** — reworded 2026-07-23 when the upstream CDN moved (302 → 404) and the datasets were mirrored to this project's own release assets. 10-07 still owes the release-process half |
+| REQ-DATA-05 | 10-02, 10-03, 10-07 | ✅ met — reworded 2026-07-23 when the upstream CDN moved (302 → 404) and the datasets were mirrored to this project's own release assets. The release-process half closed by 10-07 (`d49e679`): `docs/RELEASING.md` §4 records the mirror publish as human-only (D-06) and §9 that a published release is never deleted (D-04) |
 | REQ-UX-01 | 10-04, 10-06 | ✅ met — checkpoint driven against the real app |
 | REQ-UX-02 | 10-09 | ✅ met — checkpoint driven against the real app; removal hard gate passed. Cancel-drops-queue remains unverified (see SUMMARY) |
-| REQ-DOC-01 | 10-05, 10-07 | ⚠️ **partially discharged** — README/README_zh done and the offline recipe executed as written (10-05). `docs/RELEASING.md` does not exist yet; 10-07 owes it |
+| REQ-DOC-01 | 10-05, 10-07 | ✅ met — README/README_zh done and the offline recipe executed as written (10-05). `docs/RELEASING.md` written by 10-07 (`d49e679`, 249 lines), with `scripts/release_preflight.py` as its D-05 scripted preflight — executed for real against the live mirror, exit 0, 9/9 digests PASS. CLI help corrected and Sphinx `-W` verified in `f580a9f` |
 
-**Outstanding for the phase:** 10-07 only (which alone closes REQ-DOC-01 and the
-rest of REQ-DATA-05).
+**Outstanding for the phase:** none. All 10 plans executed as of 2026-08-03.
+(`gsd-sdk query phase-plan-index` reports 10/11 because the phase directory's
+`PLAN.md` — the phase *overview* document — is miscounted as an eleventh executable plan.)
 
 ## Phase 11 — PlatypusStudio run archive and training/NAS views
 
@@ -55,7 +56,20 @@ phases 1-5. They are not re-indexed here; that milestone is closed.
 
 - **Cross-repo requirements have no verifier.** REQ-UX-01 and REQ-UX-02 are satisfied by code in
   the `PlatypusStudio` repo, which a phase verifier reading `tinyml-cli` cannot inspect. Both
-  are marked met/in-flight on the strength of plan SUMMARYs and a driven checkpoint, not
-  automated verification.
+  are marked met on the strength of plan SUMMARYs and a driven checkpoint, not automated
+  verification. "No automated verifier" is not the same as "unverified" — both were driven
+  against the real app by hand. Two sub-items inside them are genuinely unverified, and are
+  the ones to carry forward rather than the requirements as a whole:
+  - **Cancel-drops-queue** (10-09's own addition): every dataset downloads faster than a
+    screenshot-click round trip on this connection, so the cancel path could not be reached.
+    10-04 verified the same underlying `ProcessRunner` cancellation in the New Project sheet;
+    what is unproven is that cancelling also drops the *rest of the bulk queue*.
+  - **`MMCLI_DATASETS` in the GUI** (10-09 checkpoint row 8): confirmed at CLI level only. A
+    `.app` launched via `open` does not inherit shell environment and the app does not inject
+    that variable, so the GUI path was never exercised.
+
+  Phase 11's REQ-TEST-01 owns the structural cause: `Package.swift` declares a single test
+  target (`MMCLIKitTests`) depending only on `MMCLIKit`, so every SwiftUI view has zero
+  coverage. Automating these two before that lands means building the harness twice.
 - **Status here is hand-audited**, not derived by tooling. Re-check it against plan frontmatter
   after any replan.
