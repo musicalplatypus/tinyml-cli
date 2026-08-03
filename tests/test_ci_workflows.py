@@ -1,22 +1,28 @@
-"""Guard that .github/workflows/test-cli.yml and release.yml actually collect the
-phase-10 regression-guard test files, and that the two workflows never drift apart.
+"""Guard that .github/workflows/test-cli.yml and release.yml collect the *entire* tests/
+directory by default, and that the two workflows' pytest invocations never drift apart.
 
 Every guard phase 10 built (test_build_config.py's 36 assertions, test_datasets_download.py's
 50 tests, test_datasets_cli.py's contract/D-5 tests) was inert in CI before 10-08: both
 workflows' pytest invocations named only the two pre-existing Tier 4 files, so removing a
 PyInstaller exclusion or breaking the MMCLI_DATASETS air-gap policy would pass every CI run
-silently. This file is the guard that the fix holds and does not quietly regress:
+silently. 10-08 fixed that by naming six files explicitly — but 10-REVIEW.md IN-06 found the
+same failure mode one level up: a hand-maintained file list meant every *other* file in
+tests/ (~38 at review time, e.g. test_security.py, test_fuzz_path_validation.py,
+test_attack_surface.py) ran in no CI job at all, on no push/PR/release, silently. This file's
+guard now enforces the collection-by-default shape instead of a specific file list, so a new
+test file is in CI the moment it's added, not when someone remembers to wire it into two
+workflow files:
 
   1. Each workflow contains exactly one `python -m pytest` invocation (so there's exactly one
-     place either file's collection is decided).
-  2. The set of test files named by that invocation is identical between the two workflows —
-     the drift guard. A one-sided edit (added to test-cli.yml, forgotten in release.yml, or
-     vice versa) fails here instead of surfacing as a silent gap discovered later.
-  3. That set is a superset of the required six files, named below in one place with a
-     comment recording that dropping one from CI is a decision, not routine cleanup.
-  4. Every test path named by either workflow actually exists on disk, so a rename that
-     forgets to update the workflow fails here rather than as a pytest "file not found"
-     collection error during a real release run.
+     place collection is decided).
+  2. That invocation's first argument is the bare `tests/` directory — not any individual
+     `tests/test_*.py` file — so pytest's own default collection decides what runs, and no
+     file can be silently excluded by omission from a list.
+  3. The invocation is identical (whitespace-normalized) between the two workflows — the
+     drift guard. A one-sided edit (a flag added to one but not the other, or a narrowing
+     back down to individual files) fails here instead of surfacing as a silent gap later.
+  4. The one deliberate, explicit deselection (`-k "not TestInitDatasetExtractReal"`) survives
+     verbatim in both.
 
 Parses the raw workflow text with a regex rather than a full YAML load: the assertion is
 about the literal shell command the workflow runs, and a YAML round-trip that "helpfully"
@@ -33,10 +39,10 @@ RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 WORKFLOWS = [TEST_CLI_WORKFLOW, RELEASE_WORKFLOW]
 RELEASE_PREFLIGHT_SCRIPT = REPO_ROOT / "scripts" / "release_preflight.py"
 
-# Every file in this set must be collected by BOTH workflows' pytest invocation. Removing one
-# is a decision about what CI enforces before a release, not a cleanup — if a test file is
-# genuinely retired, update this constant deliberately, in the same change that removes it
-# from both workflows.
+# 10-REVIEW.md IN-06: this set is no longer what CI's pytest invocation names (that's now
+# just `tests/`, collected by default) — it's a lighter-weight residual guard against these
+# specific, previously hand-listed files being silently deleted or renamed out from under
+# tests/ without anyone noticing (they'd otherwise just stop being collected, with no error).
 REQUIRED_TEST_FILES = {
     "tests/test_cli_integration.py",
     "tests/test_tier4_cli.py",
@@ -55,7 +61,11 @@ PYTEST_INVOCATION_RE = re.compile(
     re.DOTALL,
 )
 
-TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./]+\.py")
+# An individual hardcoded test *file* path (as opposed to the bare `tests/` directory
+# argument), e.g. `tests/test_foo.py`. Its presence in the invocation body would mean CI has
+# narrowed back down to a hand-maintained list — silently excluding every other file in
+# tests/ again, exactly the regression 10-REVIEW.md IN-06 found and this guard now prevents.
+TEST_FILE_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./]+\.py")
 
 
 def _read(path: Path) -> str:
@@ -68,8 +78,8 @@ def _pytest_invocations(text: str):
     return PYTEST_INVOCATION_RE.findall(text)
 
 
-def _named_test_files(invocation_body: str) -> set:
-    return set(TEST_PATH_RE.findall(invocation_body))
+def _normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def test_both_workflow_files_exist():
@@ -87,43 +97,54 @@ def test_each_workflow_has_exactly_one_pytest_invocation():
         )
 
 
-def test_workflows_name_the_same_set_of_test_files():
-    """The drift guard: a one-sided edit to either workflow fails here."""
-    named = {}
+def test_pytest_invocation_collects_the_whole_tests_directory():
+    """10-REVIEW.md IN-06: both workflows must run `pytest tests/` — collection by
+    default — rather than a hand-maintained file list. Also asserts no individual
+    `tests/test_*.py` file is hardcoded in the invocation any more, since that would
+    silently narrow collection back down to whatever list someone remembered to write."""
     for path in WORKFLOWS:
         [invocation] = _pytest_invocations(_read(path))
-        named[path.name] = _named_test_files(invocation)
-
-    test_cli_set = named[TEST_CLI_WORKFLOW.name]
-    release_set = named[RELEASE_WORKFLOW.name]
-    assert test_cli_set == release_set, (
-        f"test-cli.yml and release.yml collect different test files — they must be "
-        f"identical. Only in test-cli.yml: {sorted(test_cli_set - release_set)}. "
-        f"Only in release.yml: {sorted(release_set - test_cli_set)}."
-    )
-
-
-def test_named_set_is_a_superset_of_the_required_files():
-    for path in WORKFLOWS:
-        [invocation] = _pytest_invocations(_read(path))
-        named = _named_test_files(invocation)
-        missing = REQUIRED_TEST_FILES - named
-        assert not missing, (
-            f"{path.name}'s pytest invocation is missing required test file(s) "
-            f"{sorted(missing)} — every guard this phase built must actually run in CI"
+        first_arg = invocation.split()[0] if invocation.split() else ""
+        assert first_arg == "tests/", (
+            f"{path.name}'s pytest invocation's first argument is {first_arg!r}, "
+            f"expected the bare `tests/` directory (collect everything by default — "
+            f"10-REVIEW.md IN-06) as the very first argument"
+        )
+        named_files = TEST_FILE_PATH_RE.findall(invocation)
+        assert not named_files, (
+            f"{path.name}'s pytest invocation hardcodes individual test file(s) "
+            f"{sorted(set(named_files))} instead of collecting tests/ as a whole — this "
+            f"silently excludes every other file in tests/ from CI (10-REVIEW.md IN-06)"
         )
 
 
-def test_every_named_test_path_exists_on_disk():
+def test_workflows_run_the_identical_pytest_invocation():
+    """The drift guard: a one-sided edit to either workflow's invocation (a flag added to
+    one but not the other, a narrowing back to individual files, etc.) fails here."""
+    normalized = {}
     for path in WORKFLOWS:
         [invocation] = _pytest_invocations(_read(path))
-        for test_path in _named_test_files(invocation):
-            full_path = REPO_ROOT / test_path
-            assert full_path.exists(), (
-                f"{path.name} names {test_path}, which does not exist on disk — a "
-                f"rename that forgot to update the workflow would otherwise surface only "
-                f"as a pytest collection error during a real CI run"
-            )
+        normalized[path.name] = _normalize_whitespace(invocation)
+
+    test_cli_inv = normalized[TEST_CLI_WORKFLOW.name]
+    release_inv = normalized[RELEASE_WORKFLOW.name]
+    assert test_cli_inv == release_inv, (
+        f"test-cli.yml and release.yml's pytest invocations differ — they must be "
+        f"identical.\ntest-cli.yml: {test_cli_inv!r}\nrelease.yml: {release_inv!r}"
+    )
+
+
+def test_required_test_files_still_exist_on_disk():
+    """A rename or deletion of one of these files fails here rather than silently
+    narrowing what `tests/` (and therefore CI) actually collects — with `tests/`
+    collected wholesale, a missing file produces no pytest error at all, just fewer
+    tests run, so this residual check is what actually catches it."""
+    for test_path in sorted(REQUIRED_TEST_FILES):
+        full_path = REPO_ROOT / test_path
+        assert full_path.exists(), (
+            f"{test_path} does not exist on disk — update REQUIRED_TEST_FILES in "
+            f"{Path(__file__).name} if this was a deliberate rename/retirement"
+        )
 
 
 def test_deselection_is_still_intact_in_both_workflows():

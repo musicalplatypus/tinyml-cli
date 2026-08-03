@@ -51,13 +51,9 @@ jobs:
           pip install -e .
           pip install pytest
 
-      - name: Tier 4 — CLI Integration Tests
+      - name: Run test suite
+        # 10-REVIEW.md IN-06: collects the whole tests/ directory rather than a
+        # hand-maintained list of six files -- a new test file lands in CI by
+        # default, not by remembering to add it here and in release.yml.
         run: |
-          python -m pytest \
-            tests/test_cli_integration.py \
-            tests/test_tier4_cli.py \
-            tests/test_build_config.py \
-            tests/test_datasets_download.py \
-            tests/test_datasets_cli.py \
-            tests/test_ci_workflows.py \
-            -v --tb=short -k "not TestInitDatasetExtractReal"
+          python -m pytest tests/ -v --tb=short -k "not TestInitDatasetExtractReal"
