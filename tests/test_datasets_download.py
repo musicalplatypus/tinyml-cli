@@ -875,6 +875,62 @@ class TestFetchDatasetPolicy:
         assert calls == []
         assert result2 == dest
 
+    def test_fetch_dataset_stale_cache_entry_is_unlinked_and_redownloaded(
+        self, isolated_cache, monkeypatch, fake_ti_entry
+    ):
+        # 10-REVIEW.md WR-08: exercises fetch_dataset()'s own stale-cache
+        # branch directly (unlike test_corrupted_cache_entry_is_redownloaded
+        # above, which does the os.unlink itself and calls
+        # _download_to_cache directly — testing the helper, not the branch
+        # it claims to cover).
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        with open(dest, "wb") as f:
+            f.write(b"stale, wrong content")  # sha256 mismatch
+
+        calls = []
+
+        def fake_download(url, cdir, filename, sha256, nbytes, dsname):
+            calls.append(dsname)
+            return dest
+
+        monkeypatch.setattr(datasets, "_download_to_cache", fake_download)
+        monkeypatch.setattr(datasets, "dataset_url", lambda n: "https://example.invalid/x.zip")
+
+        result = fetch_dataset(name)
+        assert calls == [name], (
+            "fetch_dataset() must unlink the stale entry and call the "
+            "downloader itself, not silently keep serving the stale bytes"
+        )
+        assert result == dest
+
+    def test_fetch_dataset_stale_cache_unlink_failure_raises_runtimeerror(
+        self, isolated_cache, monkeypatch, fake_ti_entry
+    ):
+        # 10-REVIEW.md WR-08: os.unlink can raise OSError (read-only cache,
+        # permissions, a Windows sharing violation). fetch_dataset()'s
+        # docstring promises RuntimeError on every failure mode, and callers
+        # only catch (KeyError, RuntimeError) — an unguarded OSError would
+        # escape as a raw traceback instead.
+        name = fake_ti_entry["name"]
+        meta = DATASET_REGISTRY[name]
+        cache_dir = _cache_dir(DATASETS_DEFAULT_VERSION)
+        dest = os.path.join(cache_dir, meta["filename"])
+        with open(dest, "wb") as f:
+            f.write(b"stale, wrong content")
+
+        monkeypatch.setattr(datasets, "dataset_url", lambda n: "https://example.invalid/x.zip")
+
+        def _raise_permission_denied(path):
+            raise OSError("Permission denied (simulated)")
+
+        monkeypatch.setattr(datasets.os, "unlink", _raise_permission_denied)
+
+        with pytest.raises(RuntimeError, match="could not be removed"):
+            fetch_dataset(name)
+
 
 class TestFetchDatasetMmcliDatasetsOverridesForce:
     def test_mmcli_datasets_blocks_even_with_force(self, isolated_cache, monkeypatch, fake_ti_entry):

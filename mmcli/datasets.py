@@ -724,7 +724,17 @@ def fetch_dataset(name: str, *, force: bool = False) -> str:
             return dest_path
         # Stale or corrupted cache entry: fall through and redownload rather
         # than serving bad bytes.
-        os.unlink(dest_path)
+        try:
+            os.unlink(dest_path)
+        except OSError as exc:
+            # 10-REVIEW.md WR-08: os.unlink can raise (read-only cache,
+            # permissions, a Windows sharing violation) — this docstring
+            # promises RuntimeError on every failure mode, and the CLI
+            # callers only catch (KeyError, RuntimeError), not OSError.
+            raise RuntimeError(
+                f"Cached copy of '{name}' at {dest_path} failed verification "
+                f"and could not be removed: {exc}"
+            ) from exc
 
     return _download_to_cache(
         url, cache_dir, meta["filename"], meta["sha256"], meta["bytes"], name
