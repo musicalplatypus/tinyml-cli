@@ -215,11 +215,35 @@ class TestBuildScriptsExcludeEveryModule:
 
         if _script_reads_shared_list(text):
             # Reads the shared file at build time: every module in the file is
-            # excluded by construction, provided the read actually feeds
-            # --exclude-module flags into the pyinstaller invocation.
-            assert "--exclude-module" in _strip_comment_lines(text), (
-                f"{script_path.name} references the shared exclude list but never "
-                f"builds --exclude-module flags from it"
+            # excluded by construction, provided the flags it builds actually
+            # reach the pyinstaller invocation (10-REVIEW.md WR-10: a bare
+            # "--exclude-module" substring match is satisfied by the string
+            # appearing ANYWHERE in non-comment source — an echo, a variable
+            # name, a PowerShell string that never reaches the pyinstaller
+            # argv — so a refactor that stops splatting EXCLUDE_ARGS/
+            # ExcludeArgs into the pyinstaller command line would still pass
+            # this test and silently restore the 260 MB binary).
+            code = _strip_comment_lines(text)
+            # Anchor on the actual multi-line invocation specifically (the
+            # word "pyinstaller" followed by a line-continuation character:
+            # "\" in bash, "`" in PowerShell) rather than the bare word
+            # "pyinstaller" — which also appears earlier in every script's
+            # "pip install pyinstaller" prerequisite check/comment, and a
+            # window search from THAT occurrence can spuriously reach an
+            # unrelated `$ExcludeArgs = ...` *assignment* line, passing even
+            # when the invocation itself never uses it.
+            invocation = re.search(r"pyinstaller\s*[\\`]\s*\n", code)
+            assert invocation, (
+                f"could not locate the pyinstaller invocation itself in "
+                f"{script_path.name} (expected \"pyinstaller \\\" or "
+                f"\"pyinstaller `\" starting a multi-line command)"
+            )
+            window = code[invocation.end():invocation.end() + 800]
+            assert re.search(
+                r"(\$\{EXCLUDE_ARGS\[@\]\}|@ExcludeArgs)", window,
+            ), (
+                f"{script_path.name} builds --exclude-module flags but never passes "
+                f"them to the pyinstaller invocation"
             )
             return
 
