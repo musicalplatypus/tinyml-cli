@@ -545,6 +545,56 @@ mmcli datasets path generic_audio_classification    # print the resolved on-disk
 `unavailable` — computed live against the current machine's disk and
 environment, not a static registry field.
 
+### A corrupted cache entry is repaired automatically, and reported
+
+If a cached zip's on-disk bytes no longer match its recorded sha256 (disk
+corruption, an interrupted write, manual tampering), `datasets pull`
+discards it and re-downloads automatically — it never serves the bad
+bytes — and reports the repair with a `WARNING` on stderr and a `REPAIRED`
+success line on stdout, rather than silently looking identical to a clean
+cache hit. The command still exits `0`: the repair succeeded.
+
+### `--progress-json` — machine-readable transfer progress
+
+`mmcli datasets pull --progress-json <name>` emits newline-delimited JSON
+events on stderr, one object per line, flushed immediately — unaffected by
+whether stderr is a terminal. It is intended for tools driving `mmcli` as a
+subprocess (e.g. PlatypusStudio) that need a determinate byte count instead
+of an indeterminate spinner. This is a committed interface.
+
+Event shapes (verbatim structure; values below are from a real captured
+run of `generic_timeseries_forecasting`, a 71 KB dataset):
+
+```
+{"v":1,"event":"integrity-repair","dataset":"generic_timeseries_forecasting","total_bytes":71053}
+{"v":1,"event":"start","dataset":"generic_timeseries_forecasting","total_bytes":71053}
+{"v":1,"event":"progress","dataset":"generic_timeseries_forecasting","bytes":65536,"total_bytes":71053}
+{"v":1,"event":"result","dataset":"generic_timeseries_forecasting","outcome":"downloaded","total_bytes":71053}
+```
+
+Ordering and content guarantees:
+
+- Every object carries `"v":1` and `"dataset"`.
+- `integrity-repair`, when it occurs, precedes `start` (see the corrupted-
+  cache-entry section above — that WARNING and this event report the same
+  condition).
+- At most one `start`; `progress` only ever follows a `start`. `progress`
+  is throttled (at most every 200 ms or 1 MiB, whichever comes first) so a
+  large transfer does not flood the pipe with one event per read chunk; a
+  final `progress` at 100% is always emitted before `result`.
+- `result` is always the last event, and is emitted only on success.
+  `outcome` is one of exactly `cache-hit`, `downloaded`,
+  `forced-redownload`, `integrity-repair` — the same four outcomes as the
+  plain-text success lines above.
+- On a failed transfer, no `result` is emitted; the existing `ERROR: ...`
+  line and non-zero exit are unchanged.
+- Events never carry a filesystem path, a URL, or a hostname — only a
+  dataset name and byte counts.
+
+Without `--progress-json`, `datasets pull` output is unchanged: no JSON is
+ever printed, and the flag has no effect on `init --dataset`'s auto-fetch
+policy (`--progress-json` is `datasets pull`-only).
+
 ### A first `init --dataset` on a fetched set needs network
 
 Unlike the old fully-bundled build, a first `mmcli init --dataset <name>` for
