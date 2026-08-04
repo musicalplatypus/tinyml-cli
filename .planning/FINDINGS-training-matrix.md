@@ -346,3 +346,91 @@ Dataset preparation is a **one-off**, not per-epoch:
 So single-epoch measurements are dominated by data loading and are a poor basis for judging the
 training device — which is exactly why the 1-epoch comparison misled. Marginal epochs are cheap
 and increasingly compute-bound, so the device ratio matters more as epochs increase, not less.
+
+---
+
+# FIXES APPLIED
+
+## F-1 — FIXED (tinyml-cli `bec6f87`)
+
+Removed the `dataset/annotations/` requirement from `mmcli/cli.py`. The sibling
+data-subdirectory check is retained. Regression tests added in
+`tests/test_datasets_cli.py::TestAnnotationsDirIsNotRequired` — they drive the real CLI in a
+subprocess, and were **mutation-tested**: reintroducing the requirement turns 3 of the 4 red,
+restoring turns them green.
+
+Verified after the fix: anomaly detection, image classification and audio classification all
+pass the gate with their shipped `classes/`-only layouts and **no workaround**. 113 tests across
+the four surrounding suites still pass.
+
+## F-6 — FIXED (tinyml-tensorlab `f484ddf`)
+
+Root cause: `timeseries_dataset.py` called bare **`exit()`** in its `IndexError` handler.
+`exit()` with no argument raises `SystemExit(None)`, which the interpreter reports as **status
+0** — so a hard dataset failure was indistinguishable from success to anything checking the exit
+code. Confirmed directly: `python3 -c "exit()"` → `$?=0`.
+
+Now `exit(1)`. The `KeyboardInterrupt` handler had the identical defect (a cancelled run
+reported success) and is now `exit(130)`. Both occurrences fixed.
+
+Verified: the exact failing case (regression + its own catalog preset) went from **exit 0 / 0
+artifacts** to **exit 1 / 0 artifacts**, deterministically over two runs. Controls confirm
+success paths are unaffected — regression and classification with a working preset still exit 0
+with both ONNX artifacts.
+
+Note this does not make regression *train*; it makes its failure **visible**. The underlying FE
+problem is F-5 below.
+
+## F-5 — ROOT-CAUSED, not fixed (needs a decision)
+
+**The task's default feature-extraction preset expects 3 input channels; the shipped example
+dataset has 1.**
+
+`tinyml_modelmaker/ai_modules/timeseries/constants.py:1369` sets the default for
+`generic_timeseries_classification` to:
+
+```
+Generic_256Input_FFTBIN_16Feature_8Frame_3InputChannel_removeDC_2D1,  variables=3
+```
+
+The shipped `generic_timeseries_classification` dataset is **single-column**: sample CSVs contain
+one value per row (verified: `head -1 saw10.csv | awk -F, '{print NF}'` → `1`). A 1-channel input
+through a 3-channel preset yields a 2-D tensor, and `_rearrange_dims`
+(`timeseries_dataset.py:791-797`) requires 3-D:
+
+```python
+if x_temp.ndim == 2:
+    raise Exception("Not enough dimensions present. Extract more features")
+```
+
+Which is exactly the observed error. The preset that works,
+`Generic_256Input_RAW_256Feature_1Frame`, carries no channel qualifier.
+
+**A refuted hypothesis, recorded so it is not retried:** mmcli's `builder.py:82` hardcodes
+`"feature_extraction_name": "default"` in its BASE_CONFIG, and `default` is not a real preset
+name. That looked like the cause. Setting it to `None` — so modelmaker would fall back to its own
+per-task default — **did not fix it**, because that per-task default is itself the 3-channel
+preset. The hardcoded `"default"` string is still questionable and worth tidying, but it is not
+the root cause.
+
+**Why the mismatch likely exists:** `constants.py:1368` points at
+`https://software-dl.ti.com/.../generic_timeseries_classification.zip` — the original upstream
+dataset, which the defaults were written for. This project mirrors its own copy (phase 10, after
+the upstream CDN moved). If the mirrored zip is not channel-identical to the one the defaults
+assume, every default-preset run mismatches. **This should be checked before changing any
+default.**
+
+**The decision required** (not made here, as each option changes behaviour for all users of this
+fork):
+1. Change the per-task default FE preset to a 1-channel preset matching the shipped dataset.
+2. Ship a 3-channel example dataset matching the existing default.
+3. Have mmcli detect the input channel count and select a compatible preset.
+
+Option 3 is the most robust and the only one that fixes it for user-supplied datasets too, but it
+is the largest change.
+
+## F-2 — unchanged
+
+Anomaly detection still exposes **zero** catalog FE presets, so it has no fallback at all. Its
+12 combinations remain blocked. Whether this is the same channel-mismatch family as F-5 or a
+distinct catalog gap is not established.
