@@ -1231,3 +1231,59 @@ class TestProgressJsonCli:
         assert proc.returncode != 0
         assert "unrecognized argument" in proc.stderr.lower(), proc.stderr
         assert not project.exists()
+
+
+class TestAnnotationsDirIsNotRequired:
+    """dataset/annotations/ is an OUTPUT of modelmaker, never an input.
+
+    mmcli/cli.py used to reject any project whose dataset/ lacked annotations/.
+    That inverted modelmaker's contract: when split-list files are absent it calls
+    remove_if_exists(annotations_dir) then makedirs() and generates
+    instances_{train,val,test}_list.txt itself. The check rejected datasets this
+    project ships (anomaly detection's classes/Normal + classes/Anomaly, MNIST,
+    audio) and blocked 16 of 75 model x task combinations — two of which train
+    successfully once it is lifted. See .planning/FINDINGS-training-matrix.md F-1.
+
+    These drive the REAL CLI in a subprocess. Asserting on _validate_args() alone
+    would not prove the shipped command accepts such a project.
+    """
+
+    def _project_without_annotations(self, tmp_path, data_subdir="classes"):
+        proj = tmp_path / "proj"
+        (proj / "dataset" / data_subdir / "class_a").mkdir(parents=True)
+        (proj / "dataset" / data_subdir / "class_a" / "sample.csv").write_text("1,2,3\n")
+        return proj
+
+    @pytest.mark.parametrize("data_subdir", ["classes", "files", "images"])
+    def test_train_accepts_project_without_annotations(self, tmp_path, data_subdir):
+        """No 'missing annotations' error for any of the three data layouts."""
+        proj = self._project_without_annotations(tmp_path, data_subdir)
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "--dry-run", "train",
+             "-m", "timeseries", "-t", "generic_timeseries_classification",
+             "-d", "F28P55", "-n", "CLS_100_NPU", "-i", str(proj)],
+            capture_output=True, text=True,
+            env=dict(os.environ, MMCLI_PYTHON=os.environ.get("MMCLI_PYTHON", sys.executable)),
+        )
+        combined = proc.stdout + proc.stderr
+        assert "annotations" not in combined.lower(), (
+            "mmcli rejected a project for missing dataset/annotations/, which "
+            f"modelmaker generates itself. Output:\n{combined[:600]}"
+        )
+
+    def test_missing_data_subdir_is_still_rejected(self, tmp_path):
+        """The sibling check is legitimate and must NOT be removed with it."""
+        proj = tmp_path / "proj"
+        (proj / "dataset").mkdir(parents=True)  # dataset/ exists but is empty
+        proc = subprocess.run(
+            [sys.executable, "-m", "mmcli", "--dry-run", "train",
+             "-m", "timeseries", "-t", "generic_timeseries_classification",
+             "-d", "F28P55", "-n", "CLS_100_NPU", "-i", str(proj)],
+            capture_output=True, text=True,
+            env=dict(os.environ, MMCLI_PYTHON=os.environ.get("MMCLI_PYTHON", sys.executable)),
+        )
+        combined = proc.stdout + proc.stderr
+        assert proc.returncode != 0, "a dataset/ with no data subdirectory must be rejected"
+        assert "data subdirectory" in combined.lower(), (
+            f"expected the data-subdirectory error, got:\n{combined[:600]}"
+        )

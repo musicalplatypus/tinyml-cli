@@ -1987,7 +1987,6 @@ def _validate_args(args: argparse.Namespace) -> None:
         project = os.path.abspath(project)
         args.project = project  # normalize to absolute
         dataset_dir = os.path.join(project, "dataset")
-        annotations_dir = os.path.join(dataset_dir, "annotations")
         # Data can live in classes/ (classification/anomaly), files/
         # (regression/forecasting), or images/ (vision)
         data_subdirs = ["classes", "files", "images"]
@@ -1997,10 +1996,19 @@ def _validate_args(args: argparse.Namespace) -> None:
             errors.append(
                 f"Project directory missing 'dataset/' subdirectory: {project}")
         else:
-            # Validate dataset contents
-            if not os.path.isdir(annotations_dir):
-                errors.append(
-                    f"Dataset missing 'annotations/' subdirectory: {dataset_dir}")
+            # NOTE: do NOT require dataset/annotations/ here. That directory is an
+            # OUTPUT of tinyml_modelmaker, not an input. When split-list files are
+            # absent, modelmaker sets need_to_create_splits, calls
+            # remove_if_exists(annotations_dir) and then makedirs() it, generating
+            # instances_{train,val,test}_list.txt itself
+            # (tinyml_modelmaker/ai_modules/common/datasets/__init__.py).
+            # Requiring it up front inverted that contract and rejected datasets
+            # this project itself ships: generic_timeseries_anomalydetection
+            # (classes/Normal + classes/Anomaly), mnist_image_classification and
+            # generic_audio_classification all arrive without annotations/. The
+            # check blocked 16 of 75 model x task combinations, two of which
+            # (Lenet5, MobileNetV2_58k_NPU) train successfully once it is lifted.
+            # See .planning/FINDINGS-training-matrix.md F-1.
             if not any(os.path.isdir(os.path.join(dataset_dir, d))
                        for d in data_subdirs):
                 errors.append(
