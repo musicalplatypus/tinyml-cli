@@ -184,3 +184,92 @@ upstream `generic_timeseries_classification.zip`; this project mirrors its own c
 If the mirrored zip is not channel-identical to the one the defaults were written for, the truer
 fix might be to the dataset, and option 3 would be papering over a mirroring error. Worth
 checking before building anything.
+
+---
+
+# RESOLUTIONS (2026-08-04)
+
+## Q1 — RESOLVED: the target contract exists in code, per task
+
+There is no *declaration* of target columns, but the loaders in
+`tinyml_tinyverse/common/datasets/timeseries_dataset.py` define it unambiguously. Four loader
+classes, one per task category, with **different** contracts:
+
+| Loader | Task | Contract | Channels = |
+|---|---|---|---|
+| `GenericTSDataset` (:1156) | classification | all columns are inputs | non-time columns |
+| `GenericTSDatasetReg` (:1164) | regression | *"continuous target values from the **last column**"* (:1172), `y_temp = data[:, -1]` (:1188) | non-time columns − 1 |
+| `GenericTSDatasetForecasting` (:1508) | forecasting | `y_temp = data[:, 1:]` (:1584), windowed with `forecast_horizon` | (see note) |
+| `GenericTSDatasetAD` (:1320) | anomaly detection | classes from directory listing (Normal/Anomaly), "simplified feature extraction" | non-time columns |
+
+**Plus a shared preprocessing step that must not be missed:** line 708 drops every column whose
+first value contains `time` (case-insensitive):
+
+```python
+x_temp = x_temp[[col_index for col_index, value in x_temp.iloc[0].items()
+                 if 'time' not in str(value).lower()]]
+```
+
+So channel detection must (a) drop time columns first, then (b) apply the task's own rule.
+
+Applied to the shipped datasets:
+- classification `saw10.csv`: 1 column, no time column, no target → **1 channel** → matches the 17
+  one-channel presets. `Custom_Default` selected.
+- regression `file_10.csv`: header `x,y`, 2 columns, last is target → **1 channel** → matches
+  `Custom_Default` (variables=1), *not* `Generic_8Input_ABS_8Feature_1Frame` (variables=11) which
+  is what produced `index 2 is out of bounds for axis 0 with size 2`.
+
+Forecasting's `data[:, 1:]` implies column 0 is an index/time column and the remainder are the
+series. Its rule needs confirming against a real forecasting file before implementation — it is
+the one contract not yet verified end to end. **Note it is moot for preset selection anyway:
+forecasting has zero presets.**
+
+## Q2 — RESOLVED (agreed): prefer `Custom_Default`, else per-task list
+
+Selection order among presets matching (task, channel count):
+1. `Custom_Default` if compatible
+2. otherwise an explicit per-task preference list maintained in mmcli
+3. never declaration order — it is arbitrary and can change silently upstream
+
+## Q5 — RESOLVED (agreed): fix in mmcli, prepare an upstream PR too
+
+- **mmcli** gets the working fix, so this project and PlatypusStudio benefit immediately.
+- **Upstream** (`tinyml-tensorlab`, your fork) gets a separate branch + patch prepared for
+  comment and PR contribution, so direct modelmaker users are covered too.
+
+The upstream fix is arguably the smaller one: `constants.py:1369` sets
+`generic_timeseries_classification`'s default to a **3-channel** preset while TI's own example
+dataset for that task is **1-channel**. That is a one-line inconsistency in upstream's own
+defaults.
+
+## Q6 — RESOLVED: the datasets ARE byte-identical to TI's originals
+
+Not a mirroring error. Phase 10 verified all nine datasets directly against TI's CDN with
+`curl -sL` + sha256, bypassing the code's host lock: **9/9 MATCH** against the registry digests
+(`10-03-SUMMARY-attempt1-blocked.md`). The mirror was built from those same digest-verified bytes,
+and `scripts/release_preflight.py` re-confirms 9/9 PASS against the live mirror today.
+
+`generic_timeseries_classification.zip` — sha256 `7b2c0980…`, 2,579,940 bytes — is TI's file.
+
+**Therefore the mismatch is a genuine pre-existing upstream defect:** TI's default preset for the
+task expects 3 channels; TI's example dataset for the same task has 1. This is the central
+argument for the upstream PR, and it means option 3 is not papering over a local error.
+
+## Q3, Q4 — still open, proposals stand
+
+- **Q3** (`variables` in config): almost certainly must be set alongside the selected preset,
+  since the task default sets `variables=3` next to the 3-channel preset. Requires verification —
+  selecting a 1-channel preset while leaving `variables=3` may just relocate the mismatch.
+- **Q4** (validate an explicit `--feature-extraction`): warn on mismatch, never block.
+
+# IMPLEMENTATION ORDER (proposed)
+
+1. Channel detection helper + unit tests (CSV with/without header, time-column drop, `.npy`).
+2. Preset selection helper against `FEATURE_EXTRACTION_PRESET_DESCRIPTIONS`, with the Q2 ordering.
+3. Wire into `builder.py`, replacing the hardcoded `"feature_extraction_name": "default"`.
+   Resolve Q3 here by testing whether `variables` must also be set.
+4. End-to-end verification: `init` → `train` with **no** preset flag must produce both ONNX
+   artifacts for one classification model and one regression model. Mutation-test every guard.
+5. Re-run the affected slice of the matrix (24 classification + 11 regression) to measure the
+   real change, rather than asserting it.
+6. Prepare the upstream branch/patch for `constants.py` separately, with the evidence above.
