@@ -220,3 +220,129 @@ as well as `arc_fault`: `CNN_AF_3L_{200,300,700,1400}` and `CNN_MF_{1L,2L,3L}`.
 - The 12 forecasting and 11 regression failures share the same underlying
   `Not enough dimensions present` / feature-shape family as F-5, so a single upstream FE fix may
   move many cells at once.
+
+---
+
+# SWEEP v2 — F-1 worked around, complete 75/75
+
+Same config as v1 (CPU, auto-quantization on, `--epochs 1`) plus one change: an **empty
+`dataset/annotations/` directory is created after `init`** to lift the F-1 gate. That directory
+contributes no data — modelmaker deletes and regenerates it — so it only stops mmcli refusing
+before modelmaker runs. Raw data: `training-matrix-results-v2.{ndjson,csv}`. 8.4 h total compute.
+
+Two knobs were measured and deliberately NOT changed:
+- `--no-auto-quantization` saves 8 s of 355 s (2%). Not the bottleneck; disabling it would have
+  made v2 non-comparable to v1.
+- MPS: see F-8. Not used for the sweep.
+
+| Outcome | v2 | v1 |
+|---|---:|---:|
+| PASS-WITH-PRESET | 24 | 24 |
+| **PASS (default preset)** | **2** | 0 |
+| FE-MISMATCH | 24 | 12 |
+| ARTIFACT-MISSING | 11 | 11 |
+| TRAIN-FAIL | 10 | 9 |
+| BLOCKED | 3 | 3 |
+| TIMEOUT | 1 | 0 |
+| CONFIG-INVALID | **0** | 16 |
+
+**26 of 75 combinations train successfully** (24 with an explicit preset, 2 with the default).
+
+## v1 → v2 changes — all from lifting F-1
+
+| Task | v1 | v2 |
+|---|---|---|
+| image_classification | CONFIG-INVALID ×3 | **PASS ×2**, TIMEOUT ×1 |
+| generic_timeseries_anomalydetection | CONFIG-INVALID ×12 | FE-MISMATCH ×12 |
+| audio_classification | CONFIG-INVALID ×1 | TRAIN-FAIL ×1 |
+
+Everything else reproduced identically, which is the expected control: nothing but the
+annotations gate changed.
+
+**F-1 was concealing working configurations.** `Lenet5` and `MobileNetV2_58k_NPU` both train
+successfully and were blocked by an incorrect precondition, not by any real defect. That raises
+F-1's severity: it does not merely obscure results, it prevents supported work.
+
+## F-7 — image-classification models are 25–85× slower than everything else
+
+| Model | Outcome | Wall |
+|---|---|---:|
+| Lenet5 | PASS | 352 s |
+| MobileNetV2_58k_NPU | PASS | **8,613 s (2.4 h)** |
+| MobileNetV1_58k_NPU | TIMEOUT | >10,800 s (3 h, killed) |
+
+Every non-image combination in the matrix finishes in ~350 s. The MobileNets are 25× and >30×
+that. `MobileNetV1_58k_NPU` did not complete within a three-hour budget and its true status
+remains **unknown** — it is recorded TIMEOUT, not FAIL.
+
+Whether this is expected for MNIST-scale image training on CPU, or a pathology, is not
+established here. It is the one result in the matrix that a longer budget could still change.
+
+## F-5 refined — the default preset works exactly once
+
+`Lenet5` (`fe_preset: null`) is the **only** combination of 75 that trains on the default
+feature-extraction preset. All 24 classification successes required
+`Generic_256Input_RAW_256Feature_1Frame`. The default-preset problem is therefore near-universal
+rather than a classification quirk.
+
+## Still true after v2
+
+- Anomaly detection (12) fails at feature extraction with **zero catalog presets** to fall back
+  on — F-2 confirmed by measurement, not inference. Fixing F-1 did not rescue it, as predicted.
+- Regression (11) still exits **0** with no artifacts — F-6, the silent failure, unchanged.
+- arc_fault (4) and motor_fault (3) still fail on missing modelzoo entries — F-3.
+- blower_imbalance (3) still has no dataset.
+
+## Runner defect, disclosed
+
+v2 initially aborted at 73/75: `TypeError: can't concat str to bytes` in the sweep runner's own
+timeout handler (`TimeoutExpired.stdout` returns bytes even under `text=True`). This was a defect
+in the harness, not in mmcli. Fixed (bytes-safe) and the last two combinations were re-run with a
+180-minute budget. No earlier result was affected.
+
+## F-8 — MPS: 3.8× faster on large models, but unusable with auto-quantization
+
+Benchmarked on `CLS_55k_NPU`, the largest generic timeseries model, 50 epochs, CPU vs MPS run
+sequentially on an otherwise idle machine.
+
+Steady state (epochs 1-49, after one-off dataset prep):
+
+| | compute/batch | samples/s | time/epoch |
+|---|---:|---:|---:|
+| CPU | 0.0407 s | 1,572-1,650 | 2 s |
+| MPS | **0.0108 s** | **5,909-6,916** | **<1 s** |
+
+Float-training total: CPU 175 s vs MPS 76 s.
+
+**There is a crossover with model size.** On `CLS_100_NPU` (~100 params) MPS was ~20× *slower*
+(276-776 samples/s vs 5,543-6,407). On `CLS_55k_NPU` (~55k params) it is ~3.8× *faster*. Tiny
+models never amortise GPU dispatch and host↔device copy overhead; larger ones do.
+
+**But the MPS run FAILED** — exit 1, one artifact of two:
+
+```
+torchmodelopt/quantization/base/fx/auto_quantization.py:82 compute_hessian_eigenvalues
+  -> power_iteration -> compute_hessian_vector_product
+RuntimeError: max_pool2d with `return_indices=False` is not infinitely differentiable.
+```
+
+Hessian-based auto-quantization needs second-order derivatives; double-backward through
+`max_pool2d` is unsupported on this path. CPU reached the same code and survived. **This is a
+distinct defect from the known MPS float64 item.** The wall times (MPS 234 s vs CPU 565 s) are
+NOT comparable — MPS "finished" sooner only because it crashed before quantization, evaluation
+and the second export.
+
+Consequence: the 3.8× training speedup is currently unreachable with the default configuration.
+Untested follow-up: MPS with `--no-auto-quantization` should complete and would give the first
+genuinely comparable wall-time figure.
+
+## Epoch scaling (answers "would more epochs change this")
+
+Dataset preparation is a **one-off**, not per-epoch:
+
+- Epoch 0: 18-20 s, of which ~15 s is data loading
+- Epochs 1-49: **2 s** (CPU), **<1 s** (MPS)
+
+So single-epoch measurements are dominated by data loading and are a poor basis for judging the
+training device — which is exactly why the 1-epoch comparison misled. Marginal epochs are cheap
+and increasingly compute-bound, so the device ratio matters more as epochs increase, not less.
