@@ -273,3 +273,78 @@ argument for the upstream PR, and it means option 3 is not papering over a local
 5. Re-run the affected slice of the matrix (24 classification + 11 regression) to measure the
    real change, rather than asserting it.
 6. Prepare the upstream branch/patch for `constants.py` separately, with the evidence above.
+
+---
+
+# OUTCOME — implemented, with two predictions disproven
+
+Implemented in mmcli: `a7804ca` (selection) and `6333c8a` (null-vs-absent key).
+`mmcli/preset_selection.py`, wired in `mmcli/builder.py`, 16 tests in
+`tests/test_preset_selection.py`.
+
+## Verified
+
+**Classification trains with no `--feature-extraction` flag** — the documented `init` → `train`
+path now works:
+
+```
+Detected 1 input channel(s); selected feature-extraction preset
+'Generic_128Input_RAW_128Feature_1Frame' (17 compatible).
+exit=0  wall=372s  artifacts=2
+```
+
+## Prediction 1 — WRONG: regression is not fixable by selection
+
+§3 said regression's 11 combinations were "**Probably** — would select `Custom_Default` (1-ch)".
+Both halves were wrong.
+
+`Custom_Default` declares `variables=1` but carries `feat_ext_transform=[]` and no frame
+structure. It is an **empty template**, not a usable default: selecting it extracts nothing, the
+tensor stays 2-D, and training fails with the very error this work exists to fix. Measured, not
+reasoned — the first implementation preferred it (per Q2) and failed identically to the original
+bug.
+
+Regression's catalog therefore contains exactly **zero usable presets for a 1-channel dataset**:
+`Custom_Default` (empty) and `Generic_8Input_ABS_8Feature_1Frame` (`variables=11`). mmcli now
+fails loudly and correctly rather than choosing something that cannot work.
+
+**Q2's agreed answer — "prefer `Custom_Default` when compatible" — is therefore reversed.**
+Matching the channel count is necessary but not sufficient; a candidate must also declare
+transforms *and* frame structure. Among survivors, a RAW passthrough is preferred as the safest
+automatic choice when nothing is known about the signal.
+
+## Prediction 2 — WRONG: the premise about the upstream default
+
+§1 and the F-5 notes attributed the failure to a task default naming a 3-channel preset. That
+entry is in `DATASET_EXAMPLES` — example-dataset metadata reached only through a getter, never
+applied on the training path. The real cause is that **no default preset exists at all**
+(`params.py:183`, `feature_extraction_name=None`). See the correction in
+`FINDINGS-training-matrix.md`.
+
+This strengthens the case for selection rather than weakening it: mmcli is supplying a preset
+where none exists, not overriding a bad one.
+
+## Q5 — the upstream half is withdrawn
+
+A patch to the `DATASET_EXAMPLES` entry was written, tested, and **reverted**: it changed nothing
+on the training path, because that dict is not consulted there. `tinyml-tensorlab` carries no net
+change from this work beyond the separate F-6 `exit()` fix.
+
+If an upstream change is still wanted, the target is different and larger: give the timeseries
+tasks a real default feature-extraction preset, and add presets for anomaly detection and
+forecasting, which have none at all (F-2). That is a design decision for the maintainers, not a
+one-line fix.
+
+## Scope, restated against measurements
+
+| Task | Combos | Predicted | Actual |
+|---|---:|---|---|
+| classification | 24 | Yes | **Yes — verified end to end** |
+| regression | 11 | Probably | **No — no usable preset exists** |
+| anomaly detection | 12 | No | No (0 presets) |
+| forecasting | 12 | No | No (0 presets) |
+| others | 16 | No | No — unrelated causes |
+
+So the net effect is the 24 classification combinations moving from "passes only if you already
+know the preset name" to "passes by default". That is the UX win §3 predicted; the pass-count
+change is zero, because those 24 already passed with an explicit preset.

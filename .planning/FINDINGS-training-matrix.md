@@ -434,3 +434,92 @@ is the largest change.
 Anomaly detection still exposes **zero** catalog FE presets, so it has no fallback at all. Its
 12 combinations remain blocked. Whether this is the same channel-mismatch family as F-5 or a
 distinct catalog gap is not established.
+
+---
+
+# CORRECTION — F-5's root cause was wrong
+
+Recorded 2026-08-04, after implementing the fix and failing to verify a patch built on the
+original diagnosis. The corrected cause is below; the original is left in place above so the
+error is visible rather than quietly rewritten.
+
+## What F-5 said (WRONG)
+
+> "The task's default feature-extraction preset expects 3 input channels; the shipped example
+> dataset has 1. `constants.py:1369` sets the default for `generic_timeseries_classification` to
+> `Generic_256Input_FFTBIN_16Feature_8Frame_3InputChannel_removeDC_2D1`, variables=3."
+
+The factual observations were right — that entry does name a 3-channel preset, and the dataset
+is 1 column. **The framing was wrong: that entry is not a task default.**
+
+## What it actually is
+
+`constants.py:1367-1370` sits inside **`DATASET_EXAMPLES`** — a catalog of example datasets
+(download URL plus suggested settings per example). It is exposed only through a getter
+(`ai_modules/timeseries/descriptions.py:258`) and is never applied as a default on the training
+path. I read it as a per-task default because it is keyed by task name.
+
+## The real root cause
+
+**There is no default feature-extraction preset at all.**
+`ai_modules/timeseries/params.py:183` sets `feature_extraction_name=None`. With no preset, no
+features are extracted, the tensor stays 2-D, and `_rearrange_dims` raises
+(`timeseries_dataset.py:791-797`).
+
+So the failure was never a channel mismatch on the default path — it was the absence of any
+feature extraction whatsoever.
+
+## How the error was caught
+
+By trying to fix it upstream and testing the result. A patch changing the `DATASET_EXAMPLES`
+entry to a 1-channel preset was applied, and training with no preset flag **failed identically**.
+Removing mmcli's explicit `null` so the key was absent entirely also failed. Both negatives
+pointed at the dict simply not being consulted, which the `DATASET_EXAMPLES` name then confirmed.
+The upstream patch was reverted; it changes nothing on the training path.
+
+## What remains true from the original F-5
+
+- The default path really does fail for classification, and naming a working preset fixes it.
+- The **regression** failure genuinely IS a channel mismatch, and that part stands: its dataset is
+  `x,y` (1 input + 1 target) while the only usable preset in its catalog declares `variables=11`,
+  and the error `index 2 is out of bounds for axis 0 with size 2` names the column count directly.
+  That mismatch arises from a preset the *sweep's fallback* chose, not from a default.
+
+## Consequence for the fix
+
+mmcli's channel-aware selection is the *right* fix under the corrected cause — arguably more
+clearly so. It supplies a preset where none exists at all, rather than papering over a wrong one.
+
+---
+
+# F-6 addendum — an explicit null is not an absent key
+
+Found while verifying the (mis-targeted) upstream patch, and worth recording on its own.
+
+mmcli emitted `feature_extraction_name: null` whenever no preset was chosen. That is **not**
+equivalent to omitting the key: the explicit null suppresses tinyml_modelmaker's own resolution.
+So whenever selection declined — a failed catalog query, undetectable channel count, a task with
+no presets — mmcli was *guaranteeing* failure rather than falling back.
+
+Fixed in `6333c8a`: `BASE_CONFIG` now carries an empty
+`data_processing_feature_extraction` dict and the key is added only when something actually
+selected a preset.
+
+This would have gone unnoticed if the upstream patch had appeared to work.
+
+---
+
+# STATUS OF FIXES
+
+| Finding | State |
+|---|---|
+| F-1 annotations precondition | **FIXED** — `bec6f87` (mmcli), mutation-tested |
+| F-6 bare `exit()` reported success | **FIXED** — `f484ddf` (tinyml-tensorlab, unpushed) |
+| F-6 addendum null-vs-absent key | **FIXED** — `6333c8a` (mmcli) |
+| F-5 no default FE preset | **FIXED for classification** — `a7804ca` (mmcli), verified end to end |
+| F-5 for regression | **NOT FIXABLE by selection** — see spec correction |
+| F-2 anomaly/forecasting: 0 presets | open, upstream |
+| F-3 models absent from modelzoo | open, upstream |
+| F-4 `--dry-run` misses missing models | open |
+| F-7 image models 25-85x slower | open |
+| F-8 MPS 3.8x faster but crashes in auto-quant | open, upstream |
