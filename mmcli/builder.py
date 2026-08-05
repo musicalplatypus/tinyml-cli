@@ -78,13 +78,18 @@ _SKELETON: dict = {
         "enable": False,
         "dataset_name": "default",
     },
-    "data_processing_feature_extraction": {
-        # NOT the string "default" — that is not a real preset name, and because
-        # _set() skips None it survived into every config where the user did not
-        # pass --feature-extraction. None matches tinyml_modelmaker's own default
-        # (ai_modules/timeseries/params.py:183).
-        "feature_extraction_name": None,
-    },
+    # Deliberately EMPTY: feature_extraction_name is only added when something
+    # actually chose one. It previously held the string "default" — not a real
+    # preset name — which survived into every config where the user passed no
+    # preset, because _set() skips None and so never overwrote it.
+    #
+    # Setting it to None instead is also wrong: emitting an explicit
+    # `feature_extraction_name: null` suppresses tinyml_modelmaker's own per-task
+    # default (ai_modules/timeseries/constants.py), so declining to choose would
+    # guarantee a failure rather than falling back. Measured: with the key
+    # emitted as null, training fails with "Not enough dimensions present" even
+    # when the task's default preset is correct. The key must be ABSENT.
+    "data_processing_feature_extraction": {},
     "training": {
         "enable": False,
         "model_name": None,
