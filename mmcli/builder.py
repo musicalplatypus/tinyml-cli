@@ -79,7 +79,11 @@ _SKELETON: dict = {
         "dataset_name": "default",
     },
     "data_processing_feature_extraction": {
-        "feature_extraction_name": "default",
+        # NOT the string "default" — that is not a real preset name, and because
+        # _set() skips None it survived into every config where the user did not
+        # pass --feature-extraction. None matches tinyml_modelmaker's own default
+        # (ai_modules/timeseries/params.py:183).
+        "feature_extraction_name": None,
     },
     "training": {
         "enable": False,
@@ -170,11 +174,30 @@ def build_config(args) -> dict:
              os.path.join(project_dir, "run"))
 
     # --- feature extraction ---
+    # An explicit --feature-extraction always wins and is never second-guessed.
+    # Otherwise, select a preset whose declared channel count matches the
+    # dataset's, because the task defaults do not always agree with the shipped
+    # data: generic_timeseries_classification defaults to a 3-channel preset
+    # while its example dataset is 1-channel, and regression's non-default
+    # preset expects 11. See mmcli/preset_selection.py and
+    # .planning/SPEC-channel-aware-preset-selection.md.
+    fe_name = getattr(args, "feature_extraction", None)
+    if fe_name is None and command == "train":
+        project_dir_for_fe = getattr(args, "project", None)
+        task_for_fe = getattr(args, "task", None)
+        if project_dir_for_fe and task_for_fe:
+            # Imported lazily: mmcli.cli imports this module, so a top-level
+            # import would be circular.
+            from mmcli import preset_selection
+            from mmcli.cli import _get_python_exe
+            fe_name = preset_selection.select_for_project(
+                project_dir_for_fe, task_for_fe, _get_python_exe(),
+            )
     _set(
         config,
         "data_processing_feature_extraction",
         "feature_extraction_name",
-        getattr(args, "feature_extraction", None),
+        fe_name,
     )
     _set(config,
          "dataset",
