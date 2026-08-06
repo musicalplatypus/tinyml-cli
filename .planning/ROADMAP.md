@@ -137,6 +137,17 @@ Plans:
 
 ### Phase 11: PlatypusStudio run archive and training/NAS view verification
 
+> **MOVED 2026-08-04 — this phase now lives in the PlatypusStudio repository**, at
+> `../PlatypusStudio/.planning/ROADMAP.md` Phase 1. It was entirely PlatypusStudio work planned
+> in this repo because PlatypusStudio had no `.planning/` of its own; it now does.
+>
+> The requirements source is unchanged and still lives here:
+> `.planning/phases/10-dataset-distribution-and-binary-size/deferred-items.md`
+> §"Found during an exploratory pass over the training-report and NAS pages" (D-A…D-G).
+>
+> **Do not plan or execute this phase from tinyml-cli.** The text below is retained only so the
+> requirement IDs resolve for anything that already references them.
+
 **Goal:** Make a finished training run reviewable in the app. Today a run archives its metadata
 and nothing else, so every downstream view has nothing to show and says so by showing nothing —
 blank chart headings for a completed run, no reason for a failed one, and no route at all to the
