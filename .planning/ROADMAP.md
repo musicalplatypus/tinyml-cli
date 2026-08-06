@@ -121,7 +121,7 @@ and updated without rebuilding the binary.
   dataset obligations of cutting a release and why they exist
 
 **Depends on:** Phase 9
-**Plans:** 11/13 plans executed
+**Plans:** 12/13 plans executed
 
 Plans:
 - [x] 10-01-PLAN.md — wave 1 — Enforce PyInstaller exclusions in all three build scripts + single-source size ceiling (REQ-SIZE-01/02)

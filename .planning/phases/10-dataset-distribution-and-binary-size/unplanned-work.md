@@ -143,3 +143,27 @@ the phase began against `.planning/`. It found two gaps, both now closed:
 
 Everything else reconciles: all nine PlatypusStudio commits and all phase-10 tinyml-cli code
 commits are referenced from a SUMMARY, from this file, or from `10-REVIEWS.md`.
+
+---
+
+## 2026-08-04 — work done outside the plan structure
+
+Three code changes were made in this repo without a PLAN, driven by the training-matrix
+investigation rather than by phase 10's scope. Recorded here so they are not invisible to the
+phase record.
+
+| Commit | Change | Record |
+|---|---|---|
+| `bec6f87` | Stop requiring `dataset/annotations/` — modelmaker generates it | `FINDINGS-training-matrix.md` F-1 |
+| `a7804ca` | Channel-aware feature-extraction preset selection (`mmcli/preset_selection.py`) | `SPEC-channel-aware-preset-selection.md` |
+| `6333c8a` | Omit `feature_extraction_name` entirely rather than emitting `null` | same SPEC, "Outcome" |
+
+All three are mutation-tested and verified end to end; classification now trains with no
+`--feature-extraction` flag. They belong to no phase because the matrix sweep was not planned as
+one — it began as a test-plan request and became an investigation. If phase 10 is ever audited
+against its requirements, these commits are **not** part of REQ-SIZE/REQ-DATA/REQ-UX/REQ-DOC and
+should not be counted toward them.
+
+Also of note: `f484ddf` in `tinyml-tensorlab` (bare `exit()` reporting dataset failures as exit
+code 0) was made from this session and is recorded in `FINDINGS-training-matrix.md` F-6. It is a
+different repository and outside any phase here.

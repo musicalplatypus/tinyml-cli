@@ -1,3 +1,15 @@
+> ## ⚠ SUPERSEDED IN PART — read this first (added 2026-08-04)
+>
+> This report was written 2026-08-02 and records `status: gaps_found`, with **CR-01 as a blocker**
+> and **CR-02 as partial**. **Both were fixed later the same day** (`770bf84`, `306310a`), each
+> mutation-tested: reintroducing the defect turns the guard red. The blocker and the partial no
+> longer hold.
+>
+> Still accurate and still open: REQ-UX-01/UX-02 cannot be verified from this repository (they are
+> implemented in PlatypusStudio, which now has its own `.planning/`), and the cancel-drops-queue
+> item. The score line below has NOT been recomputed — treat it as a historical record of the
+> 2026-08-02 state, not the current one.
+
 ---
 phase: 10-dataset-distribution-and-binary-size
 verified: 2026-08-02T23:15:00Z

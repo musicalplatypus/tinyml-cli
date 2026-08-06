@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Milestone — Core Functionality & Security
-status: ready_to_plan
+status: phase_10_complete
 stopped_at: session resumed, awaiting action selection.
-last_updated: "2026-08-02T21:34:50.575Z"
+last_updated: "2026-08-04T00:00:00Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -197,11 +197,42 @@ Test infrastructure is being established with centralized fixtures in conftest.p
 | 05-05 | mmcli/diagnose.py (feat) | feat | Medium | ✅ READY |
 | 05-06 | mmcli/interactive.py (feat) | feat | Low | ✅ READY |
 
+## Current position (2026-08-04)
+
+**Phase 10 is complete — all 12 real plans (10-01..10-12) have SUMMARYs.** `gsd-sdk` reports
+13/12 because it counts the phase's bare `PLAN.md` (the phase *overview* document) as a
+thirteenth executable plan; it is not one. 10-11 and 10-12 were gap-closure plans
+added after UAT; 10-12 is `complete-with-open-items` (determinate progress still not working,
+checks 5/6/7 never run) and those items moved to PlatypusStudio's own roadmap.
+
+**Phase 11 has MOVED.** It was entirely PlatypusStudio work and now lives at
+`../PlatypusStudio/.planning/ROADMAP.md` Phase 1. Do not plan or execute it from here.
+
+**Work done outside any plan** (training-matrix investigation): `bec6f87`, `a7804ca`, `6333c8a`
+here, plus `f484ddf` in tinyml-tensorlab. Recorded in
+`phases/10-.../unplanned-work.md` and `FINDINGS-training-matrix.md`; they count toward no phase
+requirement.
+
+**Root-level artifacts** (not phase-scoped): `TEST-PLAN-training-matrix.md`,
+`FINDINGS-training-matrix.md` (F-1..F-8, **with a correction section — F-5's original root cause
+is wrong**), `SPEC-channel-aware-preset-selection.md`, and
+`training-matrix-results{,-v2}.{ndjson,csv}`.
+
+**Known stale:** `phases/10-.../10-VERIFICATION.md` records `gaps_found` from 2026-08-02; its
+blocker and partial were both fixed the same day. It carries a superseded-in-part banner rather
+than being rewritten.
+
+## Open, all upstream
+
+F-2 (anomaly detection and forecasting expose zero FE presets), F-3 (catalog advertises models
+absent from the modelzoo), F-4 (`--dry-run` misses them), F-7 (image models 25-85x slower),
+F-8 (MPS 3.8x faster on large models but crashes in Hessian auto-quantization).
+
 ## Session Continuity
 
 Last session: 2026-08-02T21:28:48Z (paused via `/gsd:pause-work` — see `.planning/HANDOFF.json`)
 Resumed: 2026-08-02 — Phase 10 at 9/11 plans, clean stopping point, only 10-07 remains.
-Stopped at: session resumed, awaiting action selection.
+Stopped at: phase 10 closed out; PlatypusStudio split into its own .planning/.
 
 **Note:** the "Resumed from: Phase 2 UAT verification" line previously here was stale by nine
 phases; the frontmatter `progress:` block above is likewise legacy (see the 2026-07-22
