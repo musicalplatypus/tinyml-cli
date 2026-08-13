@@ -211,6 +211,86 @@ populating from `mmcli info`), and dataset distribution, which is phase 10.
 Plans:
 - [ ] TBD (run /gsd-plan-phase 11 to break down)
 
+### Phase 12: Radar point-cloud classification support
+
+**Goal:** make the `radar` AI module reachable from `mmcli`. Modelmaker gained a radar module
+(`ai_modules/radar/`, task type `radar_classification`) via PR #13; `mmcli` cannot see it at all.
+`mmcli info -m radar` fails at argument parsing: `invalid choice: 'radar' (choose from
+'timeseries', 'vision', 'audio')`.
+
+**Source:** analysis of `tinyml-tensorlab` on 2026-08-06. Upstream commits `6f2c11c` (PR #13,
+Radar Point Cloud Classification), `87408c0` (preprocessing + public dataset), `088e680`
+(`radar_classification` `run()` dispatched to `main_debug` instead of `main`), `57bb052` (MPS
+benchmark).
+
+**What is actually there upstream — verified by executing the registry, not by reading it:**
+
+- Task type `radar_classification`; **exactly one model**, `Pose_and_Fall_model`
+  (`model_training_id: LINEAR_4L_PC`), target devices `F28P55` / `F28P65`, trains on cpu/cuda/mps.
+- The model's `common.task_category` is **`timeseries_classification`**, while
+  `radar/constants.py` defines `TASK_CATEGORY_RADAR_CLASSIFICATION = 'radar_classification'` and
+  maps the task type to it. **These disagree.** `get_default_data_dir_for_task()` takes a task
+  *category*, so this may change where the dataset is looked for. **Unverified — settle it before
+  planning dataset layout.**
+- `radar/training/tinyml_tinyverse/radar_classification.py:40` imports its model descriptions from
+  the generic `tinyml_modelzoo.model_descriptions.classification` zoo; the radar-specific entry is
+  filtered out of 37 registered descriptions by `task_type`.
+
+**Known upstream defects — report, do not fix here** (modelmaker is a separate repo with PRs in
+flight; this phase must tolerate these, not repair them):
+
+- `radar/constants.py:522` — `FEATURE_EXTRACTION_PRESET_DESCRIPTIONS` contains **only
+  `Mnist_Default`**, whose body is `image_height=28, image_width=28, image_num_channel=1,
+  image_mean=0.1307, image_scale=0.3081`. That is MNIST image configuration inside the radar
+  module, carried over from `vision/constants.py` (same keys, same relative position).
+- `radar/constants.py:529` — `DATASET_EXAMPLES` contains only `mnist_image_classification`,
+  pointing at `mnist_classes.zip`. Also vision residue.
+
+**Requirements:**
+
+- **REQ-RADAR-01** — `radar` is a selectable module. `MODULES` at `mmcli/cli.py:89`, the
+  `choices=` at `:1437`, and the help strings at `:850` and `:1199` all hardcode the three-module
+  list. **Four sites, and a partial fix is worse than none** — argparse would accept `radar` while
+  dispatch still rejects it.
+- **REQ-RADAR-02** — `info` and `compare` dispatch on radar. Both hardcode a three-branch
+  if/elif over `ai_modules.{timeseries,vision,audio}` (`info.py:30-`, `compare.py:20-25`), three
+  sites each. Prefer replacing the branching with a lookup keyed on the module name over adding a
+  fourth branch in six places.
+- **REQ-RADAR-03** — preset selection does not silently mis-serve radar.
+  `mmcli/preset_selection.py` imports `ai_modules.timeseries.constants` unconditionally, so its
+  channel-aware selection is timeseries-only. Given radar's only preset is an image preset, the
+  correct behaviour is very likely to **decline to choose and say why**, not to pick
+  `Mnist_Default`. Confirm against a real run before deciding.
+- **REQ-RADAR-04** — `mmcli train` completes end to end for `radar_classification` with
+  `Pose_and_Fall_model`, verified by an actual run producing an artifact. **Nothing here has ever
+  been run through mmcli** — this requirement is where the real risk sits, and it should be
+  attempted early rather than last.
+- **REQ-RADAR-05** — the radar dataset layout is documented from evidence. Point-cloud data is not
+  the CSV/`.npy` shape the timeseries path assumes, and `mmcli`'s project scaffolding
+  (`cli.py:2001` and the `init` templates) encodes layout expectations. Determine the real layout
+  from `87408c0`'s public dataset before writing any scaffolding.
+- **REQ-RADAR-06** — the upstream residue above is reported upstream with evidence, so the MNIST
+  preset and dataset example are fixed at the source rather than worked around forever.
+
+**Risks:**
+
+- **Six-plus hardcoded dispatch sites across three files.** The failure mode is a partial rollout
+  that passes argparse and fails at import. Any plan should change all sites together or add the
+  module through one registry.
+- **The radar module is largely vision-derived.** Its constants diff against `vision/constants.py`
+  by ~218 lines out of 709. Assume any radar constant is vision's until checked, not the reverse.
+- **`mmcli info` exits 0 on an import error** (`mmcli/info.py:40`, found during the 2026-08-06
+  analysis). A radar module that fails to import may look like a module with no models. Fix or
+  work around this before using `info` as the verification signal for REQ-RADAR-01/02.
+
+**Depends on:** nothing in this repo. Blocks PlatypusStudio Phase 4.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 12 to break down)
+
+---
+
 ---
 
 ## v1.0 Milestone — Core Functionality & Security (complete)
