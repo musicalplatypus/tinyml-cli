@@ -291,6 +291,79 @@ Plans:
 
 ---
 
+### Phase 13: Hold the modelmaker config contract, and close two knob gaps
+
+**Goal:** stop `mmcli` from silently breaking modelmaker's CUDA auto-defaults, and pick up two
+capabilities that exist upstream but are unreachable from the CLI.
+
+**Source:** review of 105 upstream commits (`f484ddf..57bb052`) on 2026-08-06. Full analysis of
+the CUDA policy, including a reproduced override bug, is in `.planning/ANALYSIS-cuda-auto-defaults.md`
+(handed to the tensorlab session 2026-08-06).
+
+**Requirements:**
+
+- **REQ-CUDA-01** — pin the config contract with a regression test. Modelmaker's
+  `apply_hardware_defaults` auto-enables `training.compile_model` and `training.native_amp` on
+  CUDA hosts **only when those keys are absent from the config**. Verified empirically: with no
+  flags passed, `mmcli` writes exactly `{enable, model_name}` under `training`, so the policy
+  fires correctly today.
+
+  **That compatibility is accidental, not designed.** It holds only because `_set()` skips `None`
+  (`mmcli/builder.py:127-131`). A reasonable-looking refactor that emits explicit defaults would
+  silently disable torch.compile and AMP on every CUDA host — no error, no log line, just slower
+  training and different numerics. This is the same failure shape as the earlier
+  `feature_extraction_name: "default"` bug, where emitting a key suppressed modelmaker's own
+  resolution.
+
+  The test must assert the **absence** of those keys when the flags are not passed, and their
+  presence when they are. Absence-assertions are easy to write in a way that passes vacuously —
+  make sure the test fails if the keys are emitted.
+
+- **REQ-QUANT-01** — expose `run_quant_train_only`. Modelmaker supports quantisation-only
+  retraining; `mmcli` has no flag for it. It was actively fixed upstream during this window
+  (`fb5f0f8` — it crashed when the dataset-reuse cache was empty), which suggests real use.
+  **Confirm what it actually does before designing the flag** — in particular whether it requires
+  a prior float run's artifacts to exist, since that changes whether this is a `train` flag or its
+  own subcommand.
+
+- **REQ-COMPILE-01** — verify `--compile-model` across modules. `compile_model` is now wired into
+  all four modelmaker modules (`3c900b2` vision, `baf334a` audio, `9a5facc` radar; timeseries
+  already had it). `mmcli`'s flag is module-agnostic and *should* work for all of them, but has
+  only ever been exercised on timeseries. Verify vision and audio by running them; the radar leg
+  **depends on Phase 12** and should be deferred to there rather than blocking this phase.
+
+**Deferred, deliberately — do not fold in:**
+
+`mmcli` writes **17 of modelmaker's 60 `training` params** (measured, not estimated). Unexposed
+knobs that look user-facing include `optimizer`, `lr_scheduler`, `weight_decay`, `warmup_epochs`,
+`quantization_method`, `quantization_weight_bitwidth` / `activation_bitwidth`,
+`partial_quantization`, `output_int`, `dual_op`, `load_saved_model`, `trainable_layers_from_last`,
+`num_last_epochs`, and most `nas_*` knobs beyond `nas_epochs` / `nas_optimization_mode`.
+
+This gap is **pre-existing, not caused by these commits**, and "expose all 43" is the wrong
+instinct — PROJECT.md's constraint is that users should not need to know flag names. The
+quantisation group is the one worth a scoped look, given how central auto-quantisation is to a
+run. It needs its own phase and a design argument, not a bulk flag dump.
+
+**Risks:**
+
+- **REQ-CUDA-01 cannot be verified on this hardware.** No CUDA host is available; the analysis
+  reproduced the branch logic by patching `torch.cuda.is_available`. The `mmcli`-side test does not
+  need CUDA — it asserts what `mmcli` writes, which is hardware-independent — but any claim about
+  *resulting training behaviour* does. Keep the test to the config contract and do not overclaim.
+- **The upstream contract may change.** The analysis recommends modelmaker fail closed and log
+  what it changed. If that recommendation is adopted, REQ-CUDA-01's test may need to track it.
+  Coordinate before writing the test, or write it to assert `mmcli`'s side only — which is the
+  more durable choice regardless.
+
+**Depends on:** nothing. REQ-COMPILE-01's radar leg depends on Phase 12.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 13 to break down)
+
+---
+
 ---
 
 ## v1.0 Milestone — Core Functionality & Security (complete)
