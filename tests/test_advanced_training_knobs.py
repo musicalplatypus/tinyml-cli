@@ -27,6 +27,7 @@ def _make_args(**kwargs):
         gpus=None,
         quantization=None,
         quantization_mode=None,
+        run_quant_train_only=None,
         auto_quantization=None,
         autoquant_tolerance_classification=None,
         autoquant_tolerance_regression=None,
@@ -136,3 +137,73 @@ class TestQuantizationModeFlag:
         )
         assert result.returncode != 0
         assert "invalid choice" in result.stderr or "error" in result.stderr.lower()
+
+
+class TestQuantTrainOnlyFlag:
+    """--quant-train-only: skip float training, run only the quantisation
+    training pass. Modelmaker raises ValueError when quantization is
+    NO_QUANTIZATION; mmcli must refuse that combination itself, at
+    argument-parse time, naming both flags."""
+
+    def test_flag_in_train_help(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "mmcli", "train", "--help"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0
+        assert "--quant-train-only" in result.stdout
+
+    def test_none_by_default_key_absent(self):
+        args = _make_args()
+        config = build_config(args)
+        assert "run_quant_train_only" not in config.get("training", {})
+
+    def test_true_when_flag_set(self):
+        args = _make_args(run_quant_train_only=True, quantization="QUANTIZATION_TINPU")
+        config = build_config(args)
+        assert config["training"]["run_quant_train_only"] is True
+
+    def test_rejected_with_no_quantization_explicit(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "mmcli", "train",
+             "-m", "timeseries", "-t", "motor_fault",
+             "-d", "F28P55", "--model", "CLS_1k_NPU",
+             "--quantization", "NO_QUANTIZATION",
+             "--quant-train-only"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode != 0
+        assert "--quant-train-only" in result.stderr
+        assert "--quantization" in result.stderr
+
+    def test_rejected_with_quantization_omitted(self):
+        # --quantization omitted defaults to NO_QUANTIZATION downstream in
+        # modelmaker, so the precondition must also be enforced here.
+        result = subprocess.run(
+            [sys.executable, "-m", "mmcli", "train",
+             "-m", "timeseries", "-t", "motor_fault",
+             "-d", "F28P55", "--model", "CLS_1k_NPU",
+             "--quant-train-only"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode != 0
+        assert "--quant-train-only" in result.stderr
+        assert "--quantization" in result.stderr
+
+    def test_accepted_with_quantization_tinpu(self, tmp_path):
+        data_dir = tmp_path / "data"
+        (data_dir / "dataset" / "classes" / "dummy").mkdir(parents=True)
+        (data_dir / "dataset" / "classes" / "dummy" / "sample.csv").write_text(
+            "1,2,3\n4,5,6\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-m", "mmcli", "--dry-run", "train",
+             "-m", "timeseries", "-t", "motor_fault",
+             "-d", "F28P55", "--model", "CLS_1k_NPU",
+             "-i", str(data_dir),
+             "--quantization", "QUANTIZATION_TINPU",
+             "--quant-train-only"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "run_quant_train_only: true" in result.stdout

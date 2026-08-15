@@ -239,6 +239,9 @@ def build_config(args) -> dict:
     if quant_mode is not None:
         config["training"]["quantization_mode"] = quant_mode
 
+    _set(config, "training", "run_quant_train_only",
+         getattr(args, "run_quant_train_only", None))
+
     # Performance optimization flags
     _set(config, "training", "compile_model", getattr(args, "compile_model", None))
     _set(config, "training", "native_amp", getattr(args, "native_amp", None))

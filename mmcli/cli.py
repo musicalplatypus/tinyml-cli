@@ -589,6 +589,18 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
             "QAT generally produces higher accuracy; PTQ is faster."
         ),
     )
+    group.add_argument(
+        "--quant-train-only",
+        dest="run_quant_train_only",
+        action="store_true",
+        default=None,
+        help=(
+            "Skip the float training pass and run only the quantisation\n"
+            "training pass (requires --quantization QUANTIZATION_TINPU).\n"
+            "Useful for re-running quantisation training against an\n"
+            "already-trained float checkpoint."
+        ),
+    )
 
     # Performance optimization flags (advanced)
     perf = parser.add_argument_group("performance options (advanced)")
@@ -1979,6 +1991,20 @@ def _validate_args(args: argparse.Namespace) -> None:
                 f"--nas is only supported for classification tasks, "
                 f"not '{task}'.\n"
                 f"  Supported: {', '.join(NAS_SUPPORTED_TASKS)}"
+            )
+
+    # --quant-train-only skips float training and runs only the quantisation
+    # pass; modelmaker raises ValueError if quantization is NO_QUANTIZATION
+    # (its own default when --quantization is omitted). Reject here, at
+    # parse time, naming both flags, rather than surfacing a modelmaker
+    # traceback from deep inside the subprocess.
+    if getattr(args, "run_quant_train_only", False):
+        quantization = getattr(args, "quantization", None)
+        if quantization in (None, "NO_QUANTIZATION"):
+            errors.append(
+                "--quant-train-only requires --quantization QUANTIZATION_TINPU "
+                "(quantization cannot be NO_QUANTIZATION when --quant-train-only "
+                "is set)"
             )
 
     # Validate project directory structure for train/run
