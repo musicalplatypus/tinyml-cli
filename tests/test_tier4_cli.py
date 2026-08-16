@@ -310,7 +310,18 @@ class TestDryRunCrossDevice:
     @pytest.mark.parametrize("device", REPRESENTATIVE_DEVICES)
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
     def test_dry_run_valid_config(self, module, task_type, device, tmp_path, mock_tinyml_modelmaker_registry):
-        """--dry-run should generate valid YAML for each task × device combo."""
+        """--dry-run should generate valid YAML for each task × device combo.
+
+        generic_timeseries_forecasting is excepted below: it has zero
+        feature-extraction presets in the upstream catalog (finding F-2,
+        .planning/FINDINGS-training-matrix.md — "anomaly detection has no
+        usable feature-extraction preset", confirmed to also cover
+        forecasting), so no dataset shape could ever make its dry-run
+        succeed. mmcli's response to that — a specific, actionable error
+        naming the catalog gap — is correct and is pinned as such instead
+        of asserting a success that cannot happen. Revisit this branch once
+        upstream ships forecasting presets.
+        """
         model = self.MODEL_NAMES.get(task_type, "CLS_1k_NPU")
 
         # Create minimal directory structure
@@ -333,6 +344,27 @@ class TestDryRunCrossDevice:
             "-i", str(data_dir),
         )
         output = stdout + stderr
+
+        if task_type == "generic_timeseries_forecasting":
+            # F-2: zero feature-extraction presets upstream — dry-run cannot
+            # succeed. Assert the *specific* upstream-gap error rather than
+            # a bare non-zero exit, so a crash, typo, or unrelated
+            # regression here still fails the test.
+            assert rc != 0, (
+                f"expected --dry-run to fail for {task_type} on {device} "
+                f"(F-2: zero feature-extraction presets upstream) but it "
+                f"succeeded: {output[:500]}"
+            )
+            assert "no feature-extraction presets available" in output, (
+                f"expected the F-2 upstream-gap message for {task_type} on "
+                f"{device}, got: {output[:500]}"
+            )
+            assert "gap in the upstream preset catalog" in output, (
+                f"expected the F-2 upstream-gap message for {task_type} on "
+                f"{device}, got: {output[:500]}"
+            )
+            return
+
         assert rc == 0, (
             f"--dry-run failed for {task_type} on {device}: {output[:500]}"
         )
