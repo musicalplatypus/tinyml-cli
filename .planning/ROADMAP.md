@@ -460,10 +460,35 @@ construction rather than a change specific to `info` itself.
 - It stalled two executor agents mid-plan when they were told to run the full suite.
 
 **Depends on:** nothing. Unblocks PlatypusStudio Phase 6, which may need less caching afterwards.
-**Plans:** 0 plans
+**Plans:** 1 of 2 complete
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 14 to break down)
+- [x] 14-01-PLAN.md — detect at most once, and only when needed (REQ-COLD-01/02/04)
+- [ ] 14-02 — REQ-COLD-03, the PyInstaller onefile question (unplanned; scope the trade-off first)
+
+#### 14-01 outcome — 2026-08-15
+
+`_detect_training_device()` was running **3× per invocation, 2.60s total**, shelling out to
+`system_profiler` before argparse was even built. Now memoised and lazy: **0 calls** for `--version`.
+
+| measurement | before | after |
+|---|---|---|
+| `python -m mmcli --version` (source) | 2.75s | **0.07s** |
+| onefile binary `--version` | 6.58s | **3.93s** |
+| onefile `mmcli info …` | 8–9s | **6.81s** |
+| **full test suite** | **848s (14:08)** | **458s (7:38)** |
+
+Device selection is unchanged — verified via `--dry-run` with default, explicit `cpu` and explicit
+`auto`, all producing identical config. This was a *when*/*how often* fix, not a *what* fix.
+
+**The suite result was not a goal and is the most useful number here.** It got 46% faster without a
+single test being touched, confirming that its runtime was largely mmcli cold start paid repeatedly
+by tests that spawn the real binary. A 14-minute suite is one people skip — this one hid 10 failures
+for four days and stalled two executor agents mid-plan.
+
+**REQ-COLD-03 remains open.** The onefile improvement above is a side effect; ~3.9s of PyInstaller
+unpacking is still there and is a separate decision that trades against Phase 10's distribution-size
+work.
 
 ---
 
