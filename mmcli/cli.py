@@ -147,6 +147,15 @@ NAS_SUPPORTED_TASKS = [
 # Metal / MPS detection
 # ---------------------------------------------------------------------------
 
+# Process-lifetime cache for _detect_training_device(). The available
+# device is a property of the machine, not of a single call, so re-running
+# the ~0.9s system_profiler/nvidia-smi probe on every invocation within the
+# same process is pure waste (measured: 3 calls -> 2.6s for `mmcli
+# --version` before this cache existed). Populated on first real call;
+# `None` means "not yet computed", so it is never mistaken for a result.
+_TRAINING_DEVICE_CACHE: str | None = None
+
+
 def _detect_training_device() -> str:
     """
     Return the best available training device on this machine.
@@ -154,12 +163,21 @@ def _detect_training_device() -> str:
 
     Uses platform heuristics so that torch does NOT need to be importable
     in the CLI binary itself (torch lives in the external MMCLI_PYTHON env).
+
+    Memoised for the lifetime of the process via _TRAINING_DEVICE_CACHE —
+    callers should still call this function each time they need the value
+    (rather than caching it themselves) so they automatically get the
+    single shared result.
     """
+    global _TRAINING_DEVICE_CACHE
+    if _TRAINING_DEVICE_CACHE is not None:
+        return _TRAINING_DEVICE_CACHE
+
     import platform
     import subprocess as _sp
-    import sys as _sys
 
     system = platform.system()
+    result: str
 
     # Fast macOS heuristic: MPS is available on Apple Silicon or Intel Macs
     # with macOS 12.3+ and a GPU.  Check via system_profiler if available.
@@ -170,21 +188,30 @@ def _detect_training_device() -> str:
                 stderr=_sp.DEVNULL, timeout=3, text=True,
             )
             if "Metal" in out or "Apple" in out:
-                return "mps"
+                result = "mps"
+            else:
+                # Fallback: any macOS likely has Metal. Preserved unchanged
+                # from the pre-existing implementation — every Darwin path
+                # (probe succeeds with the marker, succeeds without it, or
+                # raises) ends up at "mps"; see plan objective's note that
+                # this fallback is what the probe returns in practice
+                # anyway. Not this task's scope to change.
+                result = "mps"
         except Exception:
-            pass
-        # Fallback: any macOS likely has Metal
-        return "mps"
-
+            # Fallback: any macOS likely has Metal
+            result = "mps"
     # On Linux/Windows check for CUDA via nvidia-smi
-    if system in ("Linux", "Windows"):
+    elif system in ("Linux", "Windows"):
         try:
             _sp.check_output(["nvidia-smi"], stderr=_sp.DEVNULL, timeout=3)
-            return "cuda"
+            result = "cuda"
         except Exception:
-            pass
+            result = "cpu"
+    else:
+        result = "cpu"
 
-    return "cpu"
+    _TRAINING_DEVICE_CACHE = result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +435,13 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_training_args(parser: argparse.ArgumentParser) -> None:
-    detected = _detect_training_device()
+    # No _detect_training_device() call here (deliberately): this function
+    # runs while building the argparse tree, which happens for every
+    # invocation regardless of subcommand (argparse builds all subparsers
+    # eagerly) -- including `--version` and `--help`, neither of which need
+    # a training device. --training-device now defaults to None ("not yet
+    # resolved") and is only resolved to a concrete device in main(), right
+    # before it is actually consumed by build_config() for `train`/`run`.
     group = parser.add_argument_group("training options")
     group.add_argument(
         "-i", "--project",
@@ -490,7 +523,14 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--training-device",
         dest="training_device",
-        default=detected,
+        # None ("not yet resolved") rather than a pre-detected value: shown
+        # to the user as "auto-detected" in help since printing a concrete
+        # value here would require running the ~0.9s system_profiler /
+        # nvidia-smi probe just to build --help text, even for --version.
+        # main() resolves None -> _detect_training_device() immediately
+        # before the value is actually consumed (build_config()), so a real
+        # train/run still picks the exact same device as before this change.
+        default=None,
         choices=TRAINING_DEVICES,
         metavar="BACKEND",
         help=(
@@ -499,7 +539,8 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
             "  mps   Apple Metal (macOS)\n"
             "  cuda  NVIDIA GPU\n"
             "  cpu   CPU only\n"
-            f"Default (detected): {detected}"
+            "Default: auto-detected for this machine when training starts\n"
+            "(not computed for --help/--version)."
         ),
     )
     group.add_argument(
@@ -2147,7 +2188,22 @@ def main() -> None:
         format="%(levelname)s: %(name)s - %(message)s",
     )
 
-    detected = _detect_training_device()
+    # This description is only ever displayed by top-level `-h`/`--help`
+    # (subcommand help, e.g. `mmcli train --help`, uses that subparser's own
+    # help and never touches this string; verified: `_pre_subcommand_argv`
+    # below only contains flags parsed before argparse hands off to a
+    # subparser). Every other invocation -- `--version` included -- builds
+    # this ArgumentParser without ever printing its description, so calling
+    # the ~0.9s detection probe here unconditionally (as before) was pure
+    # waste for those cases. Only pay for it when top-level help will
+    # actually render the "Detected training backend" line below.
+    _pre_subcommand_argv = []
+    for _arg in sys.argv[1:]:
+        if not _arg.startswith("-"):
+            break
+        _pre_subcommand_argv.append(_arg)
+    _showing_top_help = "-h" in _pre_subcommand_argv or "--help" in _pre_subcommand_argv
+    detected = _detect_training_device() if _showing_top_help else "(not computed — top-level help not requested)"
 
     parser = argparse.ArgumentParser(
         prog="mmcli",
@@ -2214,6 +2270,15 @@ def main() -> None:
     _add_help_parser(subparsers)
 
     args = parser.parse_args()
+
+    # --training-device defaults to None (see _add_training_args) so that
+    # building the argparse tree never runs the detection probe. Only
+    # train/run subparsers declare this flag at all (hasattr guard), and
+    # only when the user didn't pass an explicit value (None) do we resolve
+    # it now -- once, memoised -- to the exact same value _detect_training_
+    # device() would have produced eagerly before this change.
+    if hasattr(args, "training_device") and args.training_device is None:
+        args.training_device = _detect_training_device()
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
