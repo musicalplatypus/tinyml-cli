@@ -401,16 +401,28 @@ and model pickers were unresponsive. The app was the symptom; mmcli is the cause
 
 **Every mmcli invocation pays ~6.6s before doing anything useful.** Decomposition:
 
-| measurement | time |
-|---|---|
-| bare Python interpreter | 0.04s |
-| `import mmcli` / `import mmcli.cli` | 0.05s / 0.02s |
-| **`_detect_training_device()`** | **0.87s**, returns `'mps'`, **uncached**, **3 call sites** |
-| `python -m mmcli --version` from source | 2.75s |
-| **onefile binary `--version`** | **6.58s** — no real work done |
-| onefile `mmcli info` | 8–9s (≈1.7s of it real work) |
+| measurement | before | after |
+|---|---|---|
+| bare Python interpreter | 0.04s | 0.04s (unchanged) |
+| `import mmcli` / `import mmcli.cli` | 0.05s / 0.02s | 0.05s / 0.02s (unchanged) |
+| **`_detect_training_device()`** | **0.87s**, returns `'mps'`, **uncached**, **3 call sites** | memoised + lazy: **0 calls** for `--version`/subcommand `--help`, **at most 1** for top-level `--help`; pinned by `tests/test_cold_start.py` (14-01) |
+| `python -m mmcli --version` from source | 2.75s | **0.04s** (measured 2026-08-15, 3-run median, freshly rebuilt) |
+| **onefile binary `--version`** | **6.58s** — no real work done | **3.93s** (measured 2026-08-15, 3-run median against a binary rebuilt from this fix via `build_macos.sh`) |
+| `mmcli info -m timeseries -t generic_timeseries_classification --format json` from source | not separately measured before | 2.78s (3-run median) |
+| onefile `mmcli info` (same args) | 8–9s (≈1.7s of it real work) | **6.81s** (3-run median, same rebuilt binary) |
 
 **Imports are not the problem.** Two costs dominate, and both are fixable.
+
+**After (REQ-COLD-04, 14-01):** the `_detect_training_device()` fix (14-01-PLAN.md) accounts for
+essentially all of the source-run improvement (2.75s → 0.04s, i.e. the full 2.71s, slightly more
+than the 2.60s originally measured for the probe alone — within noise of a 3-run median). The
+onefile binary drops from 6.58s to 3.93s, a ~2.65s improvement consistent with the same fix; the
+remaining ~3.8s (3.93s − ~0.1s bare-binary overhead) is PyInstaller `--onefile` self-extraction,
+unrelated to this plan and **not fixed here** — that is REQ-COLD-03's scope, a separate decision
+about `--onefile` vs. a directory build (distribution trade-off), not claimed as resolved by 14-01.
+The `mmcli info` figures move by roughly the same absolute amount (onefile: 8–9s → 6.81s), which is
+consistent with `info` also passing through the now-lazy `_add_training_args()` subparser
+construction rather than a change specific to `info` itself.
 
 **Requirements:**
 
@@ -420,16 +432,26 @@ and model pickers were unresponsive. The app was the symptom; mmcli is the cause
   fallback is *"any macOS likely has Metal" → `mps`* — the same answer the probe returns in
   practice. Make it lazy (only when a training-device default is actually needed) or cached; its
   result is a constant for a given machine. **Three call sites** — `:411`, `:1910`, `:2150`.
+  **Done (14-01):** memoised + made lazy at all three call sites; a real `train`/`run` still
+  selects the identical device (verified via `--dry-run`).
 - **REQ-COLD-02** — account for the rest. ~1.9s of the 2.75s source figure is unattributed;
   more than one detection call may run per invocation. **Measure before optimising** — do not
   assume the remainder is also detection.
+  **Done (14-01-PLAN.md objective):** fully attributed before implementation started —
+  `_detect_training_device()` called 3x = 2.60s, plus 0.02s imports = 2.75s; nothing left
+  unaccounted for.
 - **REQ-COLD-03** — evaluate moving off PyInstaller `--onefile`. The binary adds ~3.8s over running
   from source, which is unpacking on every launch. A directory build would remove it, but changes
   distribution and interacts with the wheel/sdist size work Phase 10 just finished
   (`BUNDLED_DATASETS`, the 108 MB wheel). **Scope the trade-off before committing** — a faster
   binary that is harder to ship may not be worth it.
+  **Still open** — 14-01 did not touch this. After 14-01's fix, onefile `--version` is 3.93s
+  against a source run of 0.04s; the ~3.8s gap is the unpacking cost this requirement describes,
+  now isolated and undiluted by detection overhead.
 - **REQ-COLD-04** — the win is verified by measurement, not assertion. Re-run the same
   decomposition afterwards and record before/after in this roadmap.
+  **Done (14-01):** before/after table above, measured 2026-08-15 against a binary freshly
+  rebuilt via `build_macos.sh` after the fix.
 
 **Why this matters beyond the GUI:**
 - Every `mmcli` call a user makes pays it.
