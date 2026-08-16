@@ -91,7 +91,20 @@ class TestDryRun:
 
     @pytest.mark.parametrize("module,task_type", TASK_TYPES)
     def test_dry_run_generates_config(self, module, task_type, tmp_path, mock_tinyml_modelmaker_registry):
-        """--dry-run train should print the YAML config without running."""
+        """--dry-run train should print the YAML config without running.
+
+        generic_timeseries_forecasting and generic_timeseries_anomalydetection
+        are excepted below: both have zero feature-extraction presets in the
+        upstream catalog (finding F-2, .planning/FINDINGS-training-matrix.md),
+        so no dataset shape could ever make their dry-run succeed.
+        generic_timeseries_regression is also excepted: it has presets, but the
+        only one that produces features requires an 11-channel input (finding
+        F-9), and this fixture's dataset detects as 2 channels, so it can never
+        match. mmcli's response to each — a specific, actionable error naming
+        the catalog gap — is correct and is pinned as such instead of
+        asserting a success that cannot happen. Revisit these branches once
+        upstream ships the missing presets.
+        """
         # Pick a minimal model name based on task type
         model_names = {
             "generic_timeseries_classification": "CLS_1k_NPU",
@@ -121,6 +134,50 @@ class TestDryRun:
             "-i", str(data_dir),
         )
         output = stdout + stderr
+
+        if task_type in (
+            "generic_timeseries_forecasting",
+            "generic_timeseries_anomalydetection",
+        ):
+            # F-2: zero feature-extraction presets upstream — dry-run cannot
+            # succeed. Assert the *specific* upstream-gap error rather than a
+            # bare non-zero exit, so a crash, typo, or unrelated regression
+            # here still fails the test.
+            assert rc != 0, (
+                f"expected --dry-run to fail for {task_type} "
+                f"(F-2: zero feature-extraction presets upstream) but it "
+                f"succeeded: {output[:500]}"
+            )
+            assert "no feature-extraction presets available" in output, (
+                f"expected the F-2 upstream-gap message for {task_type}, "
+                f"got: {output[:500]}"
+            )
+            assert "gap in the upstream preset catalog" in output, (
+                f"expected the F-2 upstream-gap message for {task_type}, "
+                f"got: {output[:500]}"
+            )
+            return
+
+        if task_type == "generic_timeseries_regression":
+            # F-9: presets exist, but the only usable one requires 11 input
+            # channels — no realistic dataset (including this fixture) can
+            # match. Assert the specific channel-mismatch error rather than
+            # a bare non-zero exit.
+            assert rc != 0, (
+                f"expected --dry-run to fail for {task_type} "
+                f"(F-9: no usable preset matches this channel count) but it "
+                f"succeeded: {output[:500]}"
+            )
+            assert "No usable feature-extraction preset for task" in output, (
+                f"expected the F-9 channel-mismatch message for {task_type}, "
+                f"got: {output[:500]}"
+            )
+            assert "input channel(s) detected in your dataset" in output, (
+                f"expected the F-9 channel-mismatch message for {task_type}, "
+                f"got: {output[:500]}"
+            )
+            return
+
         assert rc == 0, f"mmcli --dry-run failed for {task_type}: {output}"
 
 
