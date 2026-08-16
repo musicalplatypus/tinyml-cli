@@ -321,6 +321,14 @@ class TestDryRunCrossDevice:
         naming the catalog gap — is correct and is pinned as such instead
         of asserting a success that cannot happen. Revisit this branch once
         upstream ships forecasting presets.
+
+        generic_timeseries_regression is also excepted below: it has presets,
+        but the only one that produces features requires an 11-channel input
+        (finding F-9, .planning/FINDINGS-training-matrix.md), and this
+        fixture's dataset detects as 2 channels, so it can never match. This
+        is a different failure path than forecasting (presets exist here;
+        none is usable for this channel count) and produces a different,
+        specific error, pinned separately below.
         """
         model = self.MODEL_NAMES.get(task_type, "CLS_1k_NPU")
 
@@ -362,6 +370,27 @@ class TestDryRunCrossDevice:
             assert "gap in the upstream preset catalog" in output, (
                 f"expected the F-2 upstream-gap message for {task_type} on "
                 f"{device}, got: {output[:500]}"
+            )
+            return
+
+        if task_type == "generic_timeseries_regression":
+            # F-9: presets exist, but the only usable one requires 11 input
+            # channels — no realistic dataset (including this fixture) can
+            # match. Assert the specific channel-mismatch error rather than
+            # a bare non-zero exit, so a crash, typo, or unrelated
+            # regression here still fails the test.
+            assert rc != 0, (
+                f"expected --dry-run to fail for {task_type} on {device} "
+                f"(F-9: no usable preset matches this channel count) but it "
+                f"succeeded: {output[:500]}"
+            )
+            assert "No usable feature-extraction preset for task" in output, (
+                f"expected the F-9 channel-mismatch message for {task_type} "
+                f"on {device}, got: {output[:500]}"
+            )
+            assert "input channel(s) detected in your dataset" in output, (
+                f"expected the F-9 channel-mismatch message for {task_type} "
+                f"on {device}, got: {output[:500]}"
             )
             return
 

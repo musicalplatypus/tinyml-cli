@@ -509,6 +509,70 @@ This would have gone unnoticed if the upstream patch had appeared to work.
 
 ---
 
+## F-9 — `generic_timeseries_regression` has no usable feature-extraction preset for any realistic dataset
+
+**Severity: real, open. Structurally the same class as the regression half of F-5, but not
+previously given its own finding number.**
+
+Queried through `mmcli.preset_selection.query_presets` on 2026-08-15:
+
+| task | presets | usable | usable channel widths |
+|---|---|---|---|
+| `generic_timeseries_classification` | 19 | 17 | **[1, 3]** — works |
+| `generic_timeseries_regression` | 2 | 1 | **[11]** |
+| `generic_timeseries_forecasting` | 0 | 0 | — |
+| `generic_timeseries_anomalydetection` | 0 | 0 | — |
+
+`generic_timeseries_regression`'s catalog has exactly two presets:
+
+- `Custom_Default` (`variables=1`) — matches the channel count of every realistic 1-input
+  regression dataset (including the shipped example, `x,y`), but declares no
+  `feat_ext_transform`, so `choose_preset` correctly treats it as unusable — it would produce no
+  features.
+- `Generic_8Input_ABS_8Feature_1Frame` (`variables=11`) — usable, but requires an 11-input-channel
+  dataset. No dataset in this project's catalog or example set has 11 channels, and none would
+  plausibly need that shape for a regression task.
+
+**This is distinct from F-2.** F-2 is `choose_preset`'s `if not presets` branch — zero presets
+exist at all (forecasting, anomalydetection), so there is nothing to try. F-9 is the `if not
+usable` branch: presets exist, but none fits any channel count a real dataset would have. The
+error text differs accordingly (*"No usable feature-extraction preset for task '…' matches the N
+input channel(s)…"* vs. *"has no feature-extraction presets available"*), and both are asserted
+separately in the test suite for that reason.
+
+**This is also distinct from F-5.** F-5 (as corrected above) was that classification had *no*
+default preset applied at all, fixed by channel-aware selection (`a7804ca`). Regression already
+has channel-aware selection applied correctly — it detects the channel count and searches the
+catalog exactly as classification does — but the catalog itself has no member that is both
+channel-compatible and feature-producing for any shape a real regression dataset takes. Channel-
+aware selection cannot manufacture a preset that does not exist; it can only refuse to guess,
+which is what it does.
+
+**Not overstating this:** mmcli's behavior here is correct. It reports the specific gap and
+declines to select silently, rather than picking the wrong-shaped preset (`Custom_Default`, which
+would fail downstream identically to F-6's original silent failure) or guessing at the
+11-channel one. The defect is the upstream catalog's missing 1-channel regression preset with a
+real `feat_ext_transform`, not anything in this fork.
+
+### Cross-cutting observation: 3 of 4 generic timeseries task types cannot auto-select a preset
+
+Put together with F-2, the picture across all four `generic_timeseries_*` task types is:
+
+| task | can auto-select a preset? | blocked by |
+|---|---|---|
+| `generic_timeseries_classification` | **yes** | — (17 usable presets) |
+| `generic_timeseries_regression` | no | F-9 — only usable preset needs 11 channels |
+| `generic_timeseries_forecasting` | no | F-2 — zero presets in the catalog |
+| `generic_timeseries_anomalydetection` | no | F-2 — zero presets in the catalog |
+
+Only classification currently has a catalog that supports automatic, channel-aware preset
+selection end to end. This is worth more than the sum of the individual findings: it means the
+"documented happy path" (`init` → `train` with no `--feature-extraction` flag) genuinely works
+for exactly one of the four generic timeseries task types today, and the other three each need
+their own upstream catalog fix — not a code change here — before they can.
+
+---
+
 # STATUS OF FIXES
 
 | Finding | State |
@@ -523,3 +587,4 @@ This would have gone unnoticed if the upstream patch had appeared to work.
 | F-4 `--dry-run` misses missing models | open |
 | F-7 image models 25-85x slower | open |
 | F-8 MPS 3.8x faster but crashes in auto-quant | open, upstream |
+| F-9 regression: only usable preset needs 11 channels | open, upstream |
