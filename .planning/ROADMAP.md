@@ -394,6 +394,57 @@ A suite slow enough to skip is a suite that stops catching regressions.
 
 ---
 
+### Phase 14: mmcli cold start — stop paying seconds before doing any work
+
+**Source:** measured 2026-08-15 while investigating a user report that PlatypusStudio's Overview
+and model pickers were unresponsive. The app was the symptom; mmcli is the cause.
+
+**Every mmcli invocation pays ~6.6s before doing anything useful.** Decomposition:
+
+| measurement | time |
+|---|---|
+| bare Python interpreter | 0.04s |
+| `import mmcli` / `import mmcli.cli` | 0.05s / 0.02s |
+| **`_detect_training_device()`** | **0.87s**, returns `'mps'`, **uncached**, **3 call sites** |
+| `python -m mmcli --version` from source | 2.75s |
+| **onefile binary `--version`** | **6.58s** — no real work done |
+| onefile `mmcli info` | 8–9s (≈1.7s of it real work) |
+
+**Imports are not the problem.** Two costs dominate, and both are fixable.
+
+**Requirements:**
+
+- **REQ-COLD-01** — `_detect_training_device()` stops costing 0.87s on every invocation. It runs
+  `system_profiler SPDisplaysDataType` (0.90s standalone) and is called from `cli.py:2150` inside
+  `main()` **before argparse is built**, so `--version` and `--help` pay it too. Its own macOS
+  fallback is *"any macOS likely has Metal" → `mps`* — the same answer the probe returns in
+  practice. Make it lazy (only when a training-device default is actually needed) or cached; its
+  result is a constant for a given machine. **Three call sites** — `:411`, `:1910`, `:2150`.
+- **REQ-COLD-02** — account for the rest. ~1.9s of the 2.75s source figure is unattributed;
+  more than one detection call may run per invocation. **Measure before optimising** — do not
+  assume the remainder is also detection.
+- **REQ-COLD-03** — evaluate moving off PyInstaller `--onefile`. The binary adds ~3.8s over running
+  from source, which is unpacking on every launch. A directory build would remove it, but changes
+  distribution and interacts with the wheel/sdist size work Phase 10 just finished
+  (`BUNDLED_DATASETS`, the 108 MB wheel). **Scope the trade-off before committing** — a faster
+  binary that is harder to ship may not be worth it.
+- **REQ-COLD-04** — the win is verified by measurement, not assertion. Re-run the same
+  decomposition afterwards and record before/after in this roadmap.
+
+**Why this matters beyond the GUI:**
+- Every `mmcli` call a user makes pays it.
+- The tinyml-cli test suite takes **14 minutes**, largely from tests that spawn the real binary.
+  A suite that slow does not get run — it hid 10 failures for four days (Phase 13).
+- It stalled two executor agents mid-plan when they were told to run the full suite.
+
+**Depends on:** nothing. Unblocks PlatypusStudio Phase 6, which may need less caching afterwards.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 14 to break down)
+
+---
+
 ---
 
 ## v1.0 Milestone — Core Functionality & Security (complete)
