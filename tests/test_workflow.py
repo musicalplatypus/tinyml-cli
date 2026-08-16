@@ -80,9 +80,18 @@ def test_dry_run_train():
         classes_dir = os.path.join(dataset_dir, "classes", "dummy")
         os.makedirs(classes_dir)
 
+        # Real classification datasets are a single unlabelled data column
+        # with no header — the class comes from the classes/<class>/
+        # directory, not from a column in the CSV. Verified against
+        # ~/Documents/edgeai/myproject1/dataset/classes/sawtooth/saw10.csv,
+        # from a project that trained successfully on 2026-08-14. A
+        # "feature,label" two-column header here is 2 detected channels,
+        # which no generic_timeseries_classification preset accepts (17 of
+        # 19 expect 1, the rest expect 3) — do not add a header/label
+        # column back in.
         sample_csv = os.path.join(classes_dir, "sample.csv")
         with open(sample_csv, "w") as f:
-            f.write("feature,label\n1,0\n2,1\n3,0\n")
+            f.write("1\n2\n3\n")
 
         annotations_dir = os.path.join(dataset_dir, "annotations")
         os.makedirs(annotations_dir)
