@@ -144,3 +144,12 @@ None - no external service configuration required.
 ---
 *Phase: 14-mmcli-cold-start-stop-paying-seconds-before-doing-any-work*
 *Completed: 2026-08-16*
+
+## Self-Check: PASSED
+
+- FOUND: `.planning/phases/14-mmcli-cold-start-stop-paying-seconds-before-doing-any-work/14-02-SPIKE.md`
+- FOUND: `.planning/phases/14-mmcli-cold-start-stop-paying-seconds-before-doing-any-work/14-02-SUMMARY.md`
+- FOUND commit `a001504` (Task 1+2: SPIKE document)
+- FOUND commit `881da0b` (this SUMMARY)
+- `git status --short` at completion shows a clean tree — only the two files above were added,
+  nothing in `dist/`, `build/`, `mmcli.spec`, `build_macos.sh`, or `release.yml` was modified.
