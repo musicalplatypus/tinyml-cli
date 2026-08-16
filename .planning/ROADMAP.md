@@ -357,10 +357,40 @@ run. It needs its own phase and a design argument, not a bulk flag dump.
   more durable choice regardless.
 
 **Depends on:** nothing. REQ-COMPILE-01's radar leg depends on Phase 12.
-**Plans:** 0 plans
+**Plans:** 4 plans — **all complete**
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 13 to break down)
+- [x] 13-01-PLAN.md — pin the config omission contract (REQ-CUDA-01)
+- [x] 13-02-PLAN.md — expose run_quant_train_only; verify --compile-model on vision/audio (REQ-QUANT-01, REQ-COMPILE-01)
+- [x] 13-03-PLAN.md — gap closure: unrealistic classification fixture, forecasting's upstream gap
+- [x] 13-04-PLAN.md — gap closure: the remaining regression/forecasting/anomalydetection cases, and F-9
+
+#### Phase 13 outcome — closed 2026-08-15
+
+**722 tests, 0 failures** — the first fully green run since channel-aware preset selection landed.
+All three requirements met, and no production code changed in the gap-closure work.
+
+**The larger finding came from finally running the full suite.** Ten tests were failing, none of
+them a production defect: they had been asserting `rc == 0` on configs that could never have
+trained. The selector moved those failures from training time to config-generation time, where the
+error names the real cause — so the suite went red the moment it started telling the truth.
+
+**The upstream preset catalog only supports classification:**
+
+| task | presets | usable | usable widths |
+|---|---|---|---|
+| `generic_timeseries_classification` | 19 | 17 | [1, 3] — works |
+| `generic_timeseries_regression` | 2 | 1 | [11] — **F-9** |
+| `generic_timeseries_forecasting` | 0 | 0 | **F-2** |
+| `generic_timeseries_anomalydetection` | 0 | 0 | **F-2** |
+
+Three of the four generic timeseries task types cannot auto-select a preset. The affected tests now
+pin the *specific* upstream-gap message each failure path emits, citing F-2 or F-9, so they become
+meaningful again — rather than silently passing — when upstream fills a gap.
+
+**Process note worth keeping:** this only surfaced because the full suite was run. It takes ~14
+minutes, which is why it had not been, and two executors abandoned it mid-plan when instructed to.
+A suite slow enough to skip is a suite that stops catching regressions.
 
 ---
 
