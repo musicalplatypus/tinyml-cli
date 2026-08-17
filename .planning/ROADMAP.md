@@ -538,6 +538,17 @@ still be closable, or the phase never ends. Only REQ-UP-01 is a code change in t
   constructed. **If the models are never coming, the second is the only one available**, and
   `blower_imbalance` goes with them because it shares `CNN_MF_*`.
 
+  **Spiked 2026-08-16 — `.planning/SPIKE-generic-models-for-proprietary-tasks.md`.** Martin has
+  since confirmed the models are **not coming**, and proposed generic models or NAS-only. The spike
+  tested generic models: a generic classifier *does* train on arc_fault data end to end (the
+  registry lookup is bypassed because `get_model_description(name)` is not task-filtered, while the
+  arc_fault feature preset is still applied) — but it **never learns to discriminate**, predicting
+  one class for every input, and AUC ROC *fell* from 0.974 at 1 epoch to 0.542 at 10. So this is a
+  viable mechanism and **not a drop-in fix**.
+
+  **That raises the value of REQ-UP-03.** The failure is "no known architecture fits these
+  features", which is what NAS is for — and NAS is currently unusable for an unrelated reason.
+
   **This also lifts the "do not work around it here" rule for this requirement specifically.** That
   rule exists because papering over a *bug awaiting a fix* hides the real cause. A permanent,
   deliberate absence is a different situation: offering a task type that can never succeed is
