@@ -515,10 +515,35 @@ still be closable, or the phase never ends. Only REQ-UP-01 is a code change in t
   indistinguishable from a module with no models. This is the app-side half of a trap already
   found: `Models.swift` decoded an absent `models` key to an empty catalog (fixed as REQ-DEF-04 in
   PlatypusStudio Phase 5), which only mattered *because* mmcli reports failure as success.
-- **REQ-UP-02 — `arc_fault` has no models.** *(tinyml-modelzoo.)* All four advertised models map to
-  `CNN_AF_3L_{200,300,700,1400}`; the 63-entry registry contains **zero** `_AF_` entries. Every
-  arc_fault run fails at model construction, **after** feature extraction and data loading have
-  already succeeded. Full report with reproduction: `.planning/DEFECT-arc-fault-models-missing.md`.
+- **REQ-UP-02 — three task types advertise models that do not exist, and are not expected to.**
+  *(tinyml-modelzoo — but see the change of resolution below.)* Verified by construction against the
+  63-entry registry:
+
+  | task type | advertised | absent |
+  |---|---|---|
+  | `arc_fault` | 4 | **4** (`CNN_AF_3L_{200,300,700,1400}`) |
+  | `motor_fault` | 3 | **3** (`CNN_MF_*`) |
+  | `blower_imbalance` | 3 | **3** (`CNN_MF_*` — the *same* models as motor_fault) |
+  | `pir_detection` / `ecg_classification` | 1 each | 0 — these work |
+
+  Every run of the first three fails at model construction, **after** feature extraction and data
+  loading have already succeeded. Full report: `.planning/DEFECT-arc-fault-models-missing.md`.
+
+  **Martin's understanding (2026-08-16, stated as belief not established fact): the arc-fault and
+  motor-fault models are TI proprietary and will not be published.** If that is right, it changes
+  the resolution rather than the diagnosis — and it should be confirmed before acting on it, since
+  it is the difference between "waiting for upstream" and "will never arrive".
+
+  The defect report offered two fixes: add the models, or stop advertising models that cannot be
+  constructed. **If the models are never coming, the second is the only one available**, and
+  `blower_imbalance` goes with them because it shares `CNN_MF_*`.
+
+  **This also lifts the "do not work around it here" rule for this requirement specifically.** That
+  rule exists because papering over a *bug awaiting a fix* hides the real cause. A permanent,
+  deliberate absence is a different situation: offering a task type that can never succeed is
+  itself the defect, and filtering or marking those task types in `mmcli info` — so PlatypusStudio
+  stops presenting them — becomes a legitimate consumer-side fix rather than concealment. Decide
+  deliberately, and record the decision; do not let it happen by drift.
 - **REQ-UP-03 — NAS search cannot run.** *(tinyml-tinyverse.)*
   `references/timeseries_classification/train.py:259` calls `models.get_model()` **unconditionally,
   even under NAS mode**, so mmcli's synthetic `NAS_<size>` placeholder hits a registry lookup never

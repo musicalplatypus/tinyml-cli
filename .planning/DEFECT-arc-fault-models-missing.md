@@ -101,3 +101,33 @@ to train:
 
 A separate review of the CUDA auto-defaults policy is in
 `ANALYSIS-cuda-auto-defaults.md` alongside this file.
+
+---
+
+## Update 2026-08-16 — scope is wider, and the resolution may have changed
+
+**Scope.** Re-checked by construction against the registry: this is not only `arc_fault`.
+
+| task type | advertised | absent from registry |
+|---|---|---|
+| `arc_fault` | 4 | **4** (`CNN_AF_3L_*`) |
+| `motor_fault` | 3 | **3** (`CNN_MF_*`) |
+| `blower_imbalance` | 3 | **3** (`CNN_MF_*` — the same models as motor_fault) |
+| `pir_detection` | 1 | 0 |
+| `ecg_classification` | 1 | 0 |
+
+Ten model entries across three task types. `blower_imbalance` was not previously identified and
+fails collaterally, because it maps to motor_fault's models.
+
+**Resolution.** Martin's understanding, stated 2026-08-16 as belief rather than established fact:
+**the arc-fault and motor-fault models are TI proprietary and will not be published.**
+
+If that holds, resolution 1 in this report ("add the models to the registry") is unavailable, and
+resolution 2 ("stop advertising models that cannot be constructed") is the only one left. That is
+worth confirming before acting, because it is the difference between a gap that will close and one
+that never will — and the two call for opposite responses.
+
+It also changes who can fix it. A permanent absence is not a bug awaiting an upstream fix, so
+filtering these task types at the `mmcli info` boundary — so consumers never offer a task that
+cannot succeed — stops being "working around an upstream defect" and becomes the correct behaviour.
+Tracked as **REQ-UP-02** in `.planning/ROADMAP.md` Phase 15.
