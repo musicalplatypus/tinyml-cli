@@ -492,6 +492,67 @@ work.
 
 ---
 
+### Phase 15: Upstream blockers — give the things that stop tasks working a name
+
+**Why this phase exists:** six defects currently block real functionality, and **none of them had a
+REQ id**. They lived only in prose — a summary here, a findings file there, a bullet in `STATE.md`.
+That is the same failure that nearly lost Phase 1's "Also in scope" items, and it is worse here
+because these block *users*, not tidiness. Filed 2026-08-16 after the question "how is the
+DataLoader hang tracked?" turned out to have the answer "it isn't".
+
+**Only `generic_timeseries_classification` currently works end to end.** Everything below is why.
+
+**What "done" means here.** Five of the six live in `tinyml-tensorlab`, which this repo cannot fix.
+For those, done = **reported with reproduction and evidence, and a decision recorded** (fixed
+upstream, or deliberately deferred). A requirement that can only be closed by someone else must
+still be closable, or the phase never ends. Only REQ-UP-01 is a code change in this repo.
+
+**Requirements:**
+
+- **REQ-UP-01 — `mmcli info` must not exit 0 when it failed.** *(tinyml-cli — ours, fixable here.)*
+  `mmcli/info.py` emits a generated subprocess script that calls `sys.exit(0)` on `ImportError` and
+  on an unknown module, printing an `error` key nobody checks. So a module that fails to import is
+  indistinguishable from a module with no models. This is the app-side half of a trap already
+  found: `Models.swift` decoded an absent `models` key to an empty catalog (fixed as REQ-DEF-04 in
+  PlatypusStudio Phase 5), which only mattered *because* mmcli reports failure as success.
+- **REQ-UP-02 — `arc_fault` has no models.** *(tinyml-modelzoo.)* All four advertised models map to
+  `CNN_AF_3L_{200,300,700,1400}`; the 63-entry registry contains **zero** `_AF_` entries. Every
+  arc_fault run fails at model construction, **after** feature extraction and data loading have
+  already succeeded. Full report with reproduction: `.planning/DEFECT-arc-fault-models-missing.md`.
+- **REQ-UP-03 — NAS search cannot run.** *(tinyml-tinyverse.)*
+  `references/timeseries_classification/train.py:259` calls `models.get_model()` **unconditionally,
+  even under NAS mode**, so mmcli's synthetic `NAS_<size>` placeholder hits a registry lookup never
+  meant to receive it. This is why PlatypusStudio's REQ-RUN-04 is unmet. Observed live in
+  `PlatypusStudio/.planning/phases/01-*/01-05-OBSERVATIONS.md`.
+- **REQ-UP-04 — test-set evaluation deadlocks.** *(tinyml-tinyverse.)* **The one on the shipping
+  path.** A DataLoader spawns 16 worker processes for a 2,000-row test set — torch itself warns
+  this can freeze — and hangs in `poll()` after the workers exit. Confirmed with macOS `sample`,
+  not inferred. It broke a run that had *already trained to ~91%*, so every packaged runtime hits
+  it. Likely a `num_workers` cap by dataset size. Evidence:
+  `PlatypusStudio/.planning/phases/07-*/07-02-FINDINGS.md`.
+- **REQ-UP-05 — forecasting and anomaly detection have zero feature-extraction presets.**
+  *(tinyml-modelmaker catalog.)* Finding **F-2**. mmcli reports it correctly and refuses to guess;
+  the gap is real and upstream. `.planning/FINDINGS-training-matrix.md`.
+- **REQ-UP-06 — regression has no usable preset for any realistic dataset.** *(catalog.)* Finding
+  **F-9**: 2 presets, 1 usable, and that one requires **11 input channels**; the other declares no
+  transforms. Distinct from REQ-UP-05 — presets exist, none fits. `.planning/FINDINGS-training-matrix.md`.
+
+**Sequencing.** REQ-UP-01 is small, ours, and independent — do it first. REQ-UP-04 is the highest
+user impact of the rest, because it breaks a run that otherwise succeeded. REQ-UP-02/05/06 each
+kill a whole task type and are probably one upstream conversation, not three.
+
+**Do not "fix" the tensorlab ones from here.** Working around an upstream defect in mmcli is how
+the forced-preset bug survived for weeks — mmcli papering over a catalog gap is what made the real
+cause invisible. Report, and let the fix land where the defect is.
+
+**Depends on:** nothing.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 15 to break down)
+
+---
+
 ---
 
 ## v1.0 Milestone — Core Functionality & Security (complete)
