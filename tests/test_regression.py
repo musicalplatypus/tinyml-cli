@@ -110,3 +110,74 @@ def test_macos_segv_constant_defined():
     assert "_MACOS_SEGV" in content, \
         "Exit-245 guard removed from test_e2e.py — onnxsim benign crash no longer accepted"
     assert "assert rc in (0, _MACOS_SEGV)" in content
+
+
+# ---------------------------------------------------------------------------
+# Output-encoding regressions
+# ---------------------------------------------------------------------------
+
+class TestNonUTF8StdoutRegression:
+    """mmcli must not die because its output contains a non-ASCII character.
+
+    Windows opens the console streams with the ANSI code page (cp1252 on a
+    default en-US install), which cannot encode U+2500 (the box-drawing rule
+    under every table header) or U+2713 (the "project created" checkmark).
+    Before `_force_utf8_stdio()`, the first such character raised
+    UnicodeEncodeError and killed the process mid-output: `mmcli info` died
+    immediately after printing its table header, and `mmcli init` died *after*
+    creating the project, so the command both failed and left its work behind.
+
+    Reproduced on any platform with PYTHONIOENCODING=cp1252, which is what
+    makes this a real test rather than a Windows-only one nobody runs.
+    """
+
+    CP1252 = dict(os.environ, PYTHONIOENCODING="cp1252")
+
+    def _run_cp1252(self, *args):
+        return subprocess.run(
+            [*MMCLI, *args],
+            capture_output=True, text=True, cwd=REPO, env=self.CP1252,
+        )
+
+    def test_command_with_non_ascii_output_completes_under_cp1252(self):
+        proc = self._run_cp1252("init", "--list")
+        combined = proc.stdout + proc.stderr
+
+        assert "UnicodeEncodeError" not in combined, combined[-1500:]
+        assert proc.returncode == 0, combined[-1500:]
+        # Completeness, not just survival: the U+2500 rule is printed near the
+        # top, so a crash there still leaves plausible-looking output behind.
+        # Assert on a line emitted *after* it — that is what distinguishes a
+        # finished command from a truncated one.
+        assert "Create a project with:" in proc.stdout, (
+            "output stops before its final line — it was truncated, not completed:\n"
+            + combined[-1500:]
+        )
+
+    def test_the_guard_is_not_vacuous_output_really_is_non_encodable(self):
+        """Pin the premise: if mmcli's output ever became pure ASCII, the test
+        above would pass for the wrong reason and silently stop guarding
+        anything. Assert the characters that break cp1252 are still there."""
+        proc = subprocess.run(
+            [*MMCLI, "init", "--list"],
+            capture_output=True, text=True, cwd=REPO,
+            env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+        unencodable = sorted(
+            {ch for ch in proc.stdout if ord(ch) > 127
+             and not _encodable_cp1252(ch)}
+        )
+        assert unencodable, (
+            "no cp1252-unencodable character in `init --list` output any more; "
+            "the regression test above is now vacuous and needs a new target"
+        )
+
+
+def _encodable_cp1252(ch: str) -> bool:
+    try:
+        ch.encode("cp1252")
+        return True
+    except UnicodeEncodeError:
+        return False

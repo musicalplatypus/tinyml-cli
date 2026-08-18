@@ -2182,7 +2182,57 @@ def _dispatch(config: dict, python_exe: str, verbose: bool,
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _force_utf8_stdio() -> None:
+    """Make stdout/stderr able to carry the non-ASCII characters mmcli prints.
+
+    mmcli's output uses U+2713 (checkmark), U+2500 (box-drawing, for table
+    rules), and en/em dashes. On Windows, Python opens the console streams
+    with the ANSI code page -- cp1252 for a default en-US install -- which
+    cannot encode any of them, so the *first* such character raises
+    UnicodeEncodeError and kills the process mid-output:
+
+        File "mmcli/datasets.py", line 1114, in extract_dataset
+          print(f"\u2713 Project created: {project_path}")
+        UnicodeEncodeError: 'charmap' codec can't encode character '\u2713'
+
+    That is not cosmetic. `mmcli info` dies partway through printing its
+    model table (at the U+2500 rule, immediately after the header row), and
+    `mmcli init` dies *after* the project has been created -- so the command
+    both fails and leaves its work behind, with a traceback instead of the
+    success line it was one character away from finishing.
+
+    Reconfiguring to UTF-8 fixes rendering on any modern terminal (Windows
+    Terminal, VS Code, CI) and `errors="replace"` guarantees that even a
+    legacy console degrades to a substitution character rather than an
+    exception -- output is never again allowed to abort a command.
+
+    Every branch is defensive because this runs before anything else:
+      - a stream can be None under a PyInstaller windowed build;
+      - reconfigure() exists only on TextIOWrapper, so a stream swapped for
+        StringIO (pytest's capsys, embedding callers) raises AttributeError;
+      - a detached or already-closed stream raises ValueError/OSError.
+    In every one of those cases the correct action is to leave the stream
+    alone, never to fail: this is output setup, not the user's command.
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding in ("utf8", "utf8sig"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main() -> None:
+    # First, before any output at all: logging.basicConfig() below installs a
+    # StreamHandler on the *current* sys.stderr, so the streams must already
+    # be reconfigured by the time it runs.
+    _force_utf8_stdio()
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(levelname)s: %(name)s - %(message)s",
