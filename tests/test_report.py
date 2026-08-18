@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 
 import pytest
 
@@ -64,6 +65,39 @@ CONF_MATRIX_LINES = [
 # ---------------------------------------------------------------------------
 # Helper: feed a sequence of lines through a parser
 # ---------------------------------------------------------------------------
+
+def _run_within(seconds, message, fn):
+    """Run zero-arg *fn*, failing if it has not finished within *seconds*.
+
+    The tests using this exist because `_find_pca_images` once added the
+    filesystem root to its recursive search list. That failure mode does not
+    raise -- it hangs -- so the guard has to turn "still running" into a
+    failure or the test would simply never finish.
+
+    signal.alarm() did that, but SIGALRM is POSIX-only, so on Windows these
+    tests did not merely lose the guard: they failed outright on
+    `signal.SIGALRM` (AttributeError), for a reason unrelated to the
+    behaviour under test. A daemon thread joined with a timeout is portable
+    and strictly better -- it guards on every platform, and a thread left
+    behind by a genuine hang cannot outlive the session.
+    """
+    box = {}
+
+    def target():
+        try:
+            box["value"] = fn()
+        except BaseException as exc:      # re-raised on the calling thread
+            box["error"] = exc
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    if thread.is_alive():
+        pytest.fail(message)
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
 
 def _feed_lines(parser: TrainingLogParser, lines: list[str]) -> None:
     for line in lines:
@@ -626,7 +660,6 @@ class TestNASParser:
         the report output path is directly under a top-level directory (e.g. /tmp).
         """
         import math
-        import signal
 
         p = TrainingLogParser()
 
@@ -648,19 +681,16 @@ class TestNASParser:
             L(f"Test:  Acc@1 {55.0 + e:.6f}")
             L(f"New best genotype at epoch {e} (Acc@1 {55.0 + e:.6f})")
 
-        with tempfile.NamedTemporaryFile(suffix='.html', delete=False, dir='/tmp') as f:
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False,
+                                         dir=tempfile.gettempdir()) as f:
             path = f.name
         try:
-            def _timeout(signum, frame):
-                raise TimeoutError("generate() hung — likely _find_pca_images filesystem-root scan")
-
-            signal.signal(signal.SIGALRM, _timeout)
-            signal.alarm(10)
-            try:
-                HTMLReportGenerator(path).generate(p, is_complete=True)
-            finally:
-                signal.alarm(0)
-            html = open(path).read()
+            _run_within(
+                10,
+                "generate() hung — likely _find_pca_images filesystem-root scan",
+                lambda: HTMLReportGenerator(path).generate(p, is_complete=True),
+            )
+            html = open(path, encoding='utf-8').read()
             assert 'nasStepChart' in html
             assert 'NAS Step Metrics' in html
         finally:
@@ -668,19 +698,20 @@ class TestNASParser:
 
     def test_find_pca_images_does_not_search_root(self):
         """_find_pca_images must not add filesystem root to the recursive search list."""
-        # With a report dir of /tmp (two levels from root on macOS /private/tmp),
-        # the search_dirs list must never contain '/'.
-        import signal
+        # A shallow report dir is what provoked the original bug: walking up
+        # from it reached the filesystem root, which then went into the
+        # recursive search list. The temp dir is the portable stand-in --
+        # genuinely shallow on Linux (/tmp), deeper on macOS and Windows.
+        # Hardcoding '/tmp' made this Windows-only-broken, since it resolves
+        # there to a 'D:\tmp' that does not exist. The timeout below is what
+        # actually catches the regression, and it now runs on every platform.
+        report_dir = tempfile.gettempdir()
 
-        def _timeout(signum, frame):
-            raise TimeoutError("_find_pca_images hung — filesystem root in search path")
-
-        signal.signal(signal.SIGALRM, _timeout)
-        signal.alarm(5)
-        try:
-            result = _find_pca_images('/tmp')
-        finally:
-            signal.alarm(0)
+        result = _run_within(
+            5,
+            "_find_pca_images hung — filesystem root in search path",
+            lambda: _find_pca_images(report_dir),
+        )
         assert isinstance(result, list)
 
     def test_nas_subtitle_includes_search_count(self):
