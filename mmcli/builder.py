@@ -294,7 +294,7 @@ def build_config(args) -> dict:
 def write_temp_yaml(config: dict) -> str:
     """Write config dict to a named temp YAML file and return its path."""
     fd, path = tempfile.mkstemp(prefix="mmcli_", suffix=".yaml")
-    with os.fdopen(fd, "w") as fh:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         yaml.dump(config, fh, default_flow_style=False, sort_keys=False)
     logger.debug("Wrote temp config to %s", path)
     return path

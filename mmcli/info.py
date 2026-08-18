@@ -335,7 +335,7 @@ def run_info(args, python_exe: str) -> None:
 
     # Write to file or stdout
     if args.output:
-        with open(args.output, 'w') as f:
+        with open(args.output, 'w', encoding='utf-8') as f:
             f.write(output_text)
     else:
         print(output_text)

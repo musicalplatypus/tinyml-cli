@@ -810,7 +810,7 @@ def _parse_flcs_log(log_path: str) -> list:
     if not log_path or not os.path.isfile(log_path):
         return []
 
-    with open(log_path, 'r') as f:
+    with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
         content = f.read()
 
     # Find table lines (lines starting with | or +)
@@ -1481,7 +1481,7 @@ class HTMLReportGenerator:
         )
 
         os.makedirs(os.path.dirname(self.output_path) or '.', exist_ok=True)
-        with open(self.output_path, 'w') as f:
+        with open(self.output_path, 'w', encoding='utf-8') as f:
             f.write(html)
 
 
