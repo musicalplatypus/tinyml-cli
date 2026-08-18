@@ -25,6 +25,20 @@ jobs:
       - name: Checkout tinyml-cli
         uses: actions/checkout@v4
 
+      # tinyml-tensorlab carries committed Sphinx build output under docs/_build and docs/build
+      # (951 tracked files). Some exceed Windows' 260-character MAX_PATH, e.g.
+      #   docs/_build/html/_static/img/feature_extraction/
+      #     pca_on_feature_extracted_train_data_MotorFault_256Input_FFTBIN_16Feature_8Frame_3InputChannel_removeDC_2D1.png
+      # so `actions/checkout` fails with "Filename too long" and every later step is skipped.
+      #
+      # This is a workaround, not the fix. Those files originate UPSTREAM in
+      # TexasInstruments/tinyml-tensorlab (commit 8c3ee09, Feb 2026, and others) -- they are not
+      # ours to delete, and removing them from the fork would diverge it from upstream. Enabling
+      # long paths is the only lever available on our side.
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
       - name: Checkout tinyml-tensorlab (dependency)
         uses: actions/checkout@v4
         with:
@@ -48,7 +62,12 @@ jobs:
 
       - name: Install tinyml-cli
         run: |
-          pip install -e .
+          # `.[dev]`, not `.` — tests/test_fuzz_*.py import hypothesis, which is declared in
+          # pyproject.toml's [project.optional-dependencies] dev group. `pip install -e .` does
+          # not pull extras, so those two modules failed to IMPORT and pytest aborted during
+          # collection: "2 errors during collection", 0 tests run. A collection error is not a
+          # test failure -- it means the suite never reported on the code at all.
+          pip install -e ".[dev]"
           pip install pytest
 
       - name: Run test suite
