@@ -52,5 +52,10 @@ markers = [
 [project.optional-dependencies]
 dev = [
     "hypothesis>=6.0",
-    "pytest-hypothesis>=0.2.0",
+    "pytest>=7.0",
 ]
+# `pytest-hypothesis` used to be listed here and does not exist on PyPI (404) -- installing
+# `.[dev]` therefore failed outright. It went unnoticed because nothing ever installed the extras:
+# CI ran a bare `pip install -e .`, so the fuzz tests' `hypothesis` import failed at COLLECTION and
+# pytest aborted before running anything. Two defects hiding each other. The fuzz tests import only
+# `hypothesis` and `pytest`; `pytest` is listed here so `.[dev]` is sufficient on its own.
