@@ -111,12 +111,21 @@ class TestEndToEnd:
         base = tmp_path_factory.mktemp("e2e_base")
         project_dir = str(base / "project")
 
-        # 1. Init — extract bundled dataset
+        # 1. Init — obtain the dataset and extract it.
+        #
+        # --fetch is required, not optional. The datasets are no longer
+        # bundled (10-03), and mmcli's D-5 auto-fetch policy refuses to start
+        # an unnarrated download when stderr is not a terminal — which is
+        # exactly the case under CI. Without it this fixture exits 1 and every
+        # test in the class errors; it passes on a developer machine only
+        # because the dataset is already in the local cache. An e2e test
+        # explicitly wants the download, so it says so.
         rc, out, err = _run(
             "init",
             "--dataset", self.TASK,
             "-t", self.TASK,
             "-p", project_dir,
+            "--fetch",
         )
         assert rc == 0, f"mmcli init failed:\n{out}\n{err}"
         assert os.path.isdir(os.path.join(project_dir, "dataset")), "dataset/ not created"
