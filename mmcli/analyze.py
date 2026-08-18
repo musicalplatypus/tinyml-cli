@@ -32,16 +32,32 @@ def _bin_dataset(n: int) -> str:
 
 
 def _find_data_files(directory: str) -> list[str]:
-    """Find data files in directory, case-insensitively."""
+    """Find data files in directory, case-insensitively.
+
+    Globbing both `*.csv` and `*.CSV` is only safe where glob matches
+    case-sensitively. It does not on Windows: glob compares through
+    os.path.normcase(), which lowercases on Windows and is the identity on
+    POSIX, so there both patterns match the *same* file and every result was
+    returned twice. That silently doubled everything downstream -- file
+    counts, per-class sample counts, and row totals -- so `mmcli analyze`
+    reported twice the real numbers rather than failing visibly.
+
+    Note this is a property of glob, not of the filesystem: macOS's default
+    APFS is case-insensitive too, yet glob still matches case-sensitively
+    there (verified), which is why the doubling was Windows-only.
+
+    Dedupe on normcase -- the same function that causes the collision -- so
+    the two cases stay consistent: on Windows the duplicate pair collapses,
+    while on POSIX `a.csv` and `a.CSV` are genuinely different files and both
+    are still returned.
+    """
     exts = (".csv", ".txt", ".npy", ".pkl")
-    files = []
+    found: dict[str, str] = {}
     for ext in exts:
-        # Use glob with both upper and lower case variants
-        pattern_lower = os.path.join(directory, f"*{ext}")
-        pattern_upper = os.path.join(directory, f"*{ext.upper()}")
-        files.extend(glob.glob(pattern_lower))
-        files.extend(glob.glob(pattern_upper))
-    return sorted(files)
+        for pattern in (f"*{ext}", f"*{ext.upper()}"):
+            for path in glob.glob(os.path.join(directory, pattern)):
+                found.setdefault(os.path.normcase(path), path)
+    return sorted(found.values())
 
 
 def _row_count(file_path: str) -> int:

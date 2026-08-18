@@ -4,6 +4,7 @@ Tests the analyze command module which inspects project datasets and
 reports size, layout, and sample distribution.
 """
 
+import fnmatch
 import os
 import pickle
 import sys
@@ -204,6 +205,64 @@ class TestFindDataFiles:
         assert os.path.basename(result[0]) == "a.csv"
         assert os.path.basename(result[1]) == "b.csv"
         assert os.path.basename(result[2]) == "c.npy"
+
+    def test_no_duplicates_when_glob_matches_case_insensitively(self, tmp_path):
+        """Regression: on Windows every data file was returned twice.
+
+        `_find_data_files` globs both `*.csv` and `*.CSV`. glob compares
+        through os.path.normcase(), which lowercases on Windows, so there both
+        patterns match the same file and every result appeared twice --
+        doubling file counts, per-class sample counts and row totals in
+        `mmcli analyze` output. It reported twice the real numbers instead of
+        failing, which is why it survived so long.
+
+        POSIX cannot reproduce that natively (normcase is the identity, so
+        glob stays case-sensitive even on a case-insensitive filesystem like
+        APFS), so the platform behaviour is emulated here. Without emulation
+        this test would pass everywhere except the one platform it guards.
+        """
+        (tmp_path / "a.csv").write_text("1,2")
+        (tmp_path / "b.txt").write_text("3 4")
+
+        real_listdir = os.listdir
+
+        def case_insensitive_glob(pattern):
+            directory, pat = os.path.split(pattern)
+            return [
+                os.path.join(directory, name)
+                for name in sorted(real_listdir(directory))
+                if fnmatch.fnmatch(name.lower(), pat.lower())
+            ]
+
+        with mock.patch.object(analyze.glob, "glob", case_insensitive_glob):
+            result = analyze._find_data_files(str(tmp_path))
+
+        assert sorted(os.path.basename(p) for p in result) == ["a.csv", "b.txt"], (
+            f"each file must appear exactly once, got {result}"
+        )
+
+    def test_case_variant_files_are_both_kept_where_they_are_distinct(self):
+        """The dedupe must not merge genuinely different files.
+
+        On a case-sensitive filesystem `a.csv` and `a.CSV` are two files and
+        both belong in the result -- a dedupe keyed on the lowercased name
+        would silently drop one. Keyed on normcase, POSIX keeps both.
+        """
+        if os.path.normcase("A.CSV") != "A.CSV":
+            pytest.skip("normcase folds case on this platform; not applicable")
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "a.csv"), "w").close()
+            try:
+                fd = os.open(os.path.join(d, "a.CSV"), os.O_CREAT | os.O_EXCL, 0o644)
+                os.close(fd)
+            except FileExistsError:
+                pytest.skip("case-insensitive filesystem; the two cannot coexist")
+
+            result = analyze._find_data_files(d)
+
+        assert len(result) == 2, f"both case variants must survive, got {result}"
 
     def test_find_data_files_handles_multiple_extensions(self, tmp_path):
         """_find_data_files should find files with all supported extensions."""
