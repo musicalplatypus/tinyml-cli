@@ -913,6 +913,16 @@ class TestInitAutoFetchPolicy:
         # phase that creates directories, so it must apply the same guard
         # itself rather than silently accepting a relative traversal
         # sequence that `extract_dataset()` would then os.makedirs().
+        #
+        # The target is deliberately NOT under /tmp. `_is_safe_path` permits
+        # the OS temp dir by design, and on Linux `tempfile.gettempdir()` IS
+        # "/tmp" — so a /tmp target is *correctly* accepted there and the
+        # guard never fires. macOS hides that: its gettempdir() is a private
+        # /var/folders/.../T, so /tmp looks "outside" and the test passed
+        # locally while failing on CI (exit 1 from the auto-fetch policy,
+        # reached because the guard had allowed the path through). Use a
+        # location outside both cwd and the temp dir on every platform —
+        # same rationale as test_regression.py's /etc/passwd case.
         _forbid_download(monkeypatch)
 
         code, out, err = _run(
@@ -921,12 +931,12 @@ class TestInitAutoFetchPolicy:
                 "init",
                 "--task", "generic_timeseries_forecasting",
                 "--dataset", _SMALL_TI_DATASET,
-                "--project", "../../../../../../tmp/mmcli_wr12_traversal_test",
+                "--project", "../../../../../../etc/mmcli_wr12_traversal_test",
             ],
         )
         assert code == 2
         assert "unsafe path traversal" in err
-        assert not os.path.exists("/tmp/mmcli_wr12_traversal_test")
+        assert not os.path.exists("/etc/mmcli_wr12_traversal_test")
 
 
 class TestCacheInspectionHasNoSideEffects:
