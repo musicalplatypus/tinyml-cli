@@ -133,10 +133,19 @@ class TestNonUTF8StdoutRegression:
 
     CP1252 = dict(os.environ, PYTHONIOENCODING="cp1252")
 
+    # encoding="utf-8" is about how *this* process decodes the child's bytes,
+    # which is a separate question from PYTHONIOENCODING (how the child encodes
+    # them). Without it, text=True decodes using the parent's locale encoding —
+    # cp1252 on Windows — so the child's correctly-emitted UTF-8 came back as
+    # mojibake whose characters all happen to BE cp1252-encodable, and the
+    # vacuity check below concluded the output had no non-encodable characters
+    # left. It failed on Windows for a reason that had nothing to do with the
+    # behaviour under test.
     def _run_cp1252(self, *args):
         return subprocess.run(
             [*MMCLI, *args],
-            capture_output=True, text=True, cwd=REPO, env=self.CP1252,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=REPO, env=self.CP1252,
         )
 
     def test_command_with_non_ascii_output_completes_under_cp1252(self):
@@ -160,8 +169,8 @@ class TestNonUTF8StdoutRegression:
         anything. Assert the characters that break cp1252 are still there."""
         proc = subprocess.run(
             [*MMCLI, "init", "--list"],
-            capture_output=True, text=True, cwd=REPO,
-            env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=REPO, env=dict(os.environ, PYTHONIOENCODING="utf-8"),
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
