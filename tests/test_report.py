@@ -66,6 +66,29 @@ CONF_MATRIX_LINES = [
 # Helper: feed a sequence of lines through a parser
 # ---------------------------------------------------------------------------
 
+def _shallow_report_dir(tmp_path):
+    """A directory to generate the report into, for the root-scan regressions.
+
+    The original bug needed a report dir near the filesystem root: walking up
+    from it reached "/", which then went into the recursive search list. "/tmp"
+    is that directory on POSIX, and it is kept here so those platforms test the
+    exact condition that produced the bug.
+
+    Windows has no equivalent writable shallow path -- the literal "/tmp"
+    resolves to a "D:\\tmp" that does not exist -- so it falls back to pytest's
+    isolated tmp_path. Two deliberate consequences, stated rather than hidden:
+    the shallow-dir condition is only genuinely exercised on POSIX, and the
+    hang guard still applies everywhere.
+
+    tempfile.gettempdir() was tried here and is wrong: on a CI runner it is a
+    large shared tree (~326k entries locally), so scanning it costs ~1s on a
+    fast machine and blew the timeout on Windows, which runs this suite ~26x
+    slower. That made the guard fire on scan volume rather than on the hang it
+    exists to catch -- a slow test dressed up as a regression.
+    """
+    return "/tmp" if os.path.isdir("/tmp") else str(tmp_path)
+
+
 def _run_within(seconds, message, fn):
     """Run zero-arg *fn*, failing if it has not finished within *seconds*.
 
@@ -205,7 +228,7 @@ class TestHTMLReportGenerator:
             gen = HTMLReportGenerator(out)
             gen.generate(p, is_complete=True)
 
-            html = open(out).read()
+            html = open(out, encoding='utf-8').read()
 
         # Chart canvas
         assert 'id="metricsChart"' in html
@@ -233,7 +256,7 @@ class TestHTMLReportGenerator:
             gen = HTMLReportGenerator(out)
             gen.generate(p, is_complete=False)
 
-            html = open(out).read()
+            html = open(out, encoding='utf-8').read()
 
         assert 'http-equiv="refresh"' in html
         assert "Training" in html
@@ -259,7 +282,7 @@ class TestCreateReportHandler:
 
             finalize()
 
-            html = open(out).read()
+            html = open(out, encoding='utf-8').read()
             assert "Complete" in html
             assert 'id="metricsChart"' in html
             assert "55.0%" in html
@@ -364,7 +387,7 @@ class TestRegressionParser:
             out = os.path.join(tmpdir, "report.html")
             gen = HTMLReportGenerator(out)
             gen.generate(p, is_complete=True)
-            html = open(out).read()
+            html = open(out, encoding='utf-8').read()
         # Y-axis label is R²-Score, not Accuracy
         assert "R²-Score" in html or "R\\u00b2-Score" in html
         assert "Float Best R" in html  # summary card
@@ -491,7 +514,7 @@ class TestForecastingParser:
             out = os.path.join(tmpdir, "report.html")
             gen = HTMLReportGenerator(out)
             gen.generate(p, is_complete=True)
-            html = open(out).read()
+            html = open(out, encoding='utf-8').read()
         assert "SMAPE" in html
         assert "Float Best SMAPE" in html
         assert "Per-Variable Forecasting Metrics" in html
@@ -590,7 +613,7 @@ class TestNASParser:
         try:
             gen = HTMLReportGenerator(path)
             gen.generate(p, is_complete=True)
-            html = open(path).read()
+            html = open(path, encoding='utf-8').read()
             assert 'nasStepChart' in html
             assert 'NAS Step Metrics' in html
             assert 'nasStepSwitchMode' in html
@@ -623,7 +646,7 @@ class TestNASParser:
         try:
             gen = HTMLReportGenerator(path)
             gen.generate(p, is_complete=False)
-            html = open(path).read()
+            html = open(path, encoding='utf-8').read()
             assert 'nasChart' in html
             assert 'NAS Architecture Search' in html
             assert 'NAS Search' in html
@@ -646,14 +669,14 @@ class TestNASParser:
         try:
             gen = HTMLReportGenerator(path)
             gen.generate(p)
-            html = open(path).read()
+            html = open(path, encoding='utf-8').read()
             assert 'nasChart' in html
             assert 'metricsChart' in html
             assert 'NAS search epochs' in html
         finally:
             os.unlink(path)
 
-    def test_nas_multi_epoch_report_completes(self):
+    def test_nas_multi_epoch_report_completes(self, tmp_path):
         """generate(is_complete=True) must not hang with many NAS epochs and steps.
 
         Regression test for _find_pca_images recursing into filesystem root when
@@ -682,7 +705,7 @@ class TestNASParser:
             L(f"New best genotype at epoch {e} (Acc@1 {55.0 + e:.6f})")
 
         with tempfile.NamedTemporaryFile(suffix='.html', delete=False,
-                                         dir=tempfile.gettempdir()) as f:
+                                         dir=_shallow_report_dir(tmp_path)) as f:
             path = f.name
         try:
             _run_within(
@@ -696,16 +719,9 @@ class TestNASParser:
         finally:
             os.unlink(path)
 
-    def test_find_pca_images_does_not_search_root(self):
+    def test_find_pca_images_does_not_search_root(self, tmp_path):
         """_find_pca_images must not add filesystem root to the recursive search list."""
-        # A shallow report dir is what provoked the original bug: walking up
-        # from it reached the filesystem root, which then went into the
-        # recursive search list. The temp dir is the portable stand-in --
-        # genuinely shallow on Linux (/tmp), deeper on macOS and Windows.
-        # Hardcoding '/tmp' made this Windows-only-broken, since it resolves
-        # there to a 'D:\tmp' that does not exist. The timeout below is what
-        # actually catches the regression, and it now runs on every platform.
-        report_dir = tempfile.gettempdir()
+        report_dir = _shallow_report_dir(tmp_path)
 
         result = _run_within(
             5,
@@ -723,7 +739,7 @@ class TestNASParser:
         try:
             gen = HTMLReportGenerator(path)
             gen.generate(p)
-            html = open(path).read()
+            html = open(path, encoding='utf-8').read()
             assert '2 NAS search epochs' in html
         finally:
             os.unlink(path)
